@@ -1,0 +1,12 @@
+# This is the Supabase configuration file
+
+[auth]
+  # Site URL for authentication
+  site_url = "http://localhost:8080"
+  # Additional redirect URLs for authentication
+  additional_redirect_urls = ["https://localhost:8080"]
+
+[auth.external.google]
+  client_id = "613643296116-bgmbk7hvkkirk6a9suo0nc06ehcoi2fe.apps.googleusercontent.com"
+  redirect_uri = "https://ascqdjqxiuygvvmawyrx.supabase.co/auth/v1/callback"
+  enabled = true
