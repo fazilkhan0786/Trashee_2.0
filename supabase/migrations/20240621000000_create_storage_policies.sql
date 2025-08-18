@@ -5,8 +5,18 @@ VALUES
   ('profiles', 'profiles', true, 5242880, '{"image/jpeg","image/jpg","image/png","image/gif","image/webp"}')
 ON CONFLICT (id) DO NOTHING;
 
--- Enable RLS on storage objects
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on storage objects (only if not already enabled)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_tables 
+    WHERE schemaname = 'storage' 
+    AND tablename = 'objects' 
+    AND rowsecurity = true
+  ) THEN
+    ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $$;
 
 -- Policy for users to upload their own avatars
 CREATE POLICY "Users can upload their own avatars"

@@ -5,33 +5,71 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ArrowLeft, Play, Pause, Clock, Coins, Eye, Gift, CheckCircle, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getAdvertisements, recordAdView, canWatchMoreAds, Advertisement } from '@/lib/advertisementsService';
+import { supabase } from '@/lib/supabase';
 
-interface Ad {
-  id: string;
-  title: string;
-  description: string;
-  duration: number;
-  points: number;
-  advertiser: string;
-  category: string;
-  thumbnail: string;
-}
-
+// Using the Advertisement interface from advertisementsService
 export default function ConsumerWatchAds() {
   const navigate = useNavigate();
-  const [currentAd, setCurrentAd] = useState<Ad | null>(null);
+  const [currentAd, setCurrentAd] = useState<Advertisement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [watchedAds, setWatchedAds] = useState(0);
   const [earnedPoints, setEarnedPoints] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [availableAds, setAvailableAds] = useState<Advertisement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const maxAdsPerDay = 5; // Consumer limit
   const pointsPerAd = 5;
 
-  const availableAds: Ad[] = [
+  // Load advertisements from Supabase
+  useEffect(() => {
+    async function loadAdvertisements() {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const { success, data, error } = await getAdvertisements();
+        
+        if (!success || error) {
+          console.error('Error fetching advertisements:', error);
+          setError('Failed to load advertisements. Please try again');
+          return;
+        }
+        
+        setAvailableAds(data || []);
+      } catch (err) {
+        console.error('Unexpected error loading advertisements:', err);
+        setError('An unexpected error occurred. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
     
-  ];
+    loadAdvertisements();
+  }, []);
+
+  // Check user's ad watching status
+  useEffect(() => {
+    async function checkAdStatus() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        
+        const { success, canWatch, adsWatched, adsRemaining } = await canWatchMoreAds(user.id);
+        if (success) {
+          setWatchedAds(adsWatched);
+          setEarnedPoints(adsWatched * pointsPerAd);
+        }
+      } catch (err) {
+        console.error('Error checking ad status:', err);
+      }
+    }
+    
+    checkAdStatus();
+  }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -51,7 +89,7 @@ export default function ConsumerWatchAds() {
     return () => clearInterval(interval);
   }, [isPlaying, currentAd, progress]);
 
-  const startWatchingAd = (ad: Ad) => {
+  const startWatchingAd = (ad: Advertisement) => {
     setCurrentAd(ad);
     setProgress(0);
     setIsCompleted(false);
@@ -62,17 +100,32 @@ export default function ConsumerWatchAds() {
     setIsPlaying(!isPlaying);
   };
 
-  const completeAd = () => {
-    if (isCompleted) {
-      setWatchedAds(prev => prev + 1);
-      setEarnedPoints(prev => prev + currentAd!.points);
-      setCurrentAd(null);
-      setProgress(0);
-      setIsCompleted(false);
+  const completeAd = async () => {
+    if (isCompleted && currentAd) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          alert('You must be logged in to earn points');
+          return;
+        }
+
+        const { success, error } = await recordAdView(currentAd.id, user.id);
+        if (success) {
+          setWatchedAds(prev => prev + 1);
+          setEarnedPoints(prev => prev + currentAd.points);
+          setCurrentAd(null);
+          setProgress(0);
+          setIsCompleted(false);
+        } else {
+          console.error('Error recording ad view:', error);
+          alert('Failed to record ad view. Please try again.');
+        }
+      } catch (err) {
+        console.error('Unexpected error completing ad:', err);
+        alert('An unexpected error occurred. Please try again.');
+      }
     }
   };
-
-  const remainingAds = maxAdsPerDay - watchedAds;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
@@ -95,8 +148,31 @@ export default function ConsumerWatchAds() {
       </div>
 
       <div className="p-4 space-y-6">
+        {/* Loading and Error States */}
+        {loading && (
+          <div className="flex justify-center items-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+            <span className="ml-2">Loading advertisements...</span>
+          </div>
+        )}
+        
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md">
+            <p>{error}</p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-2" 
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
         {/* Daily Progress */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
+        {!loading && !error && (
+          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2">
               <Eye className="w-5 h-5 text-blue-600" />
@@ -122,7 +198,7 @@ export default function ConsumerWatchAds() {
               <div className="text-center p-3 bg-blue-50 rounded-lg">
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <Gift className="w-4 h-4 text-blue-600" />
-                  <span className="text-xl font-bold text-blue-800">{remainingAds}</span>
+                  <span className="text-xl font-bold text-blue-800">{maxAdsPerDay - watchedAds}</span>
                 </div>
                 <p className="text-sm text-blue-600">Ads Remaining</p>
               </div>
@@ -206,7 +282,7 @@ export default function ConsumerWatchAds() {
         )}
 
         {/* Available Ads */}
-        {!currentAd && remainingAds > 0 && (
+        {!loading && !error && !currentAd && (maxAdsPerDay - watchedAds) > 0 && (
           <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
             <CardHeader className="pb-3">
               <CardTitle>Available Ads</CardTitle>
@@ -250,7 +326,7 @@ export default function ConsumerWatchAds() {
         )}
 
         {/* Daily Limit Reached */}
-        {remainingAds <= 0 && !currentAd && (
+        {(maxAdsPerDay - watchedAds) <= 0 && !currentAd && (
           <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
             <CardContent className="text-center py-12">
               <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">

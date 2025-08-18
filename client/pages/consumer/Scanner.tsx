@@ -6,6 +6,7 @@ import { ArrowLeft, Camera, QrCode, MapPin, Clock, Coins, CheckCircle, X } from 
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { addScanHistory } from '@/lib/scanHistoryService';
+import { updateLastScanned } from '@/lib/locationsService';
 
 export default function ConsumerScanner() {
   const navigate = useNavigate();
@@ -74,6 +75,14 @@ export default function ConsumerScanner() {
             console.error('Error saving scan history:', error);
           } else {
             console.log('Scan history saved successfully:', data);
+            
+            // Update the bin's last scanned information
+            // Note: In a real app, you'd get the actual bin ID from the QR code
+            // For now, we'll skip this as we don't have the actual bin ID
+            // const { success: updateSuccess, error: updateError } = await updateLastScanned(binId, user?.email || 'Unknown');
+            // if (!updateSuccess) {
+            //   console.error('Error updating bin last scanned:', updateError);
+            // }
           }
         } catch (err) {
           console.error('Unexpected error saving scan history:', err);

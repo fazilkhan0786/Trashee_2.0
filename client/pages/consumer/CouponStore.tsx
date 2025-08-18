@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,22 +8,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ArrowLeft, Search, Filter, MapPin, Calendar, Coins, Star, ShoppingBag, Wallet, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { safeNavigateBack } from '@/lib/navigation';
-
-interface Coupon {
-  id: string;
-  productName: string;
-  productImage: string;
-  shopLogo: string;
-  shopName: string;
-  pointsCost: number;
-  originalPrice: number;
-  discountedPrice: number;
-  expiryDate: string;
-  category: string;
-  distance: string;
-  rating: number;
-  description: string;
-}
+import { getCoupons, redeemCoupon, Coupon } from '@/lib/couponStoreService';
+import { supabase } from '@/lib/supabase';
 
 export default function CouponStore() {
   const navigate = useNavigate();
@@ -33,12 +19,45 @@ export default function CouponStore() {
   const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [redeemedCoupon, setRedeemedCoupon] = useState<Coupon | null>(null);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const coupons: Coupon[] = [
-   
+  // Load coupons from Supabase
+  useEffect(() => {
+    async function loadCoupons() {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const { success, data, error } = await getCoupons();
+        
+        if (!success || error) {
+          console.error('Error fetching coupons:', error);
+          setError('Failed to load coupons. Please try again');
+          return;
+        }
+        
+        setCoupons(data || []);
+      } catch (err) {
+        console.error('Unexpected error loading coupons:', err);
+        setError('An unexpected error occurred. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadCoupons();
+  }, []);
+
+  const categories = [
+    { value: 'all', label: 'All' }, 
+    { value: 'Food', label: 'Food' }, 
+    { value: 'Entertainment', label: 'Entertainment' }, 
+    { value: 'Lifestyle', label: 'Lifestyle' }, 
+    { value: 'Health', label: 'Health' }
   ];
-
-  const categories = [{ value: 'all', label: 'All' }, { value: 'Food', label: 'Food' }, { value: 'Entertainment', label: 'Entertainment' }, { value: 'Lifestyle', label: 'Lifestyle' }, { value: 'Health', label: 'Health' }];
+  
   const sortOptions = [
     { value: 'points-low', label: 'Points: Low to High' },
     { value: 'points-high', label: 'Points: High to Low' },
@@ -49,21 +68,21 @@ export default function CouponStore() {
 
   const filteredAndSortedCoupons = coupons
     .filter(coupon => {
-      const matchesSearch = coupon.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           coupon.shopName.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = coupon.product_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           coupon.shop_name.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = filterCategory === 'all' || filterCategory === '' || coupon.category === filterCategory;
       return matchesSearch && matchesCategory;
     })
     .sort((a, b) => {
       switch (sortBy) {
         case 'points-low':
-          return a.pointsCost - b.pointsCost;
+          return a.points_cost - b.points_cost;
         case 'points-high':
-          return b.pointsCost - a.pointsCost;
+          return b.points_cost - a.points_cost;
         case 'distance':
           return parseFloat(a.distance) - parseFloat(b.distance);
         case 'expiry':
-          return new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime();
+          return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
         case 'rating':
           return b.rating - a.rating;
         default:
@@ -71,11 +90,30 @@ export default function CouponStore() {
       }
     });
 
-  const handleRedeem = (coupon: Coupon) => {
-    console.log('Redeeming coupon:', coupon.id);
-    // Handle redemption logic here
-    setRedeemedCoupon(coupon);
-    setShowSuccessModal(true);
+  const handleRedeem = async (coupon: Coupon) => {
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        alert('You must be logged in to redeem coupons');
+        return;
+      }
+
+      const { success, error } = await redeemCoupon(coupon.id);
+      
+      if (!success || error) {
+        console.error('Error redeeming coupon:', error);
+        alert('Failed to redeem coupon. Please try again.');
+        return;
+      }
+      
+      setRedeemedCoupon(coupon);
+      setShowSuccessModal(true);
+    } catch (err) {
+      console.error('Unexpected error redeeming coupon:', err);
+      alert('An unexpected error occurred. Please try again.');
+    }
   };
 
   const handleSeeInWallet = () => {
@@ -149,81 +187,105 @@ export default function CouponStore() {
           </div>
         </div>
 
+        {/* Loading and Error States */}
+        {loading && (
+          <div className="flex justify-center items-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+            <span className="ml-2">Loading coupons...</span>
+          </div>
+        )}
+        
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md">
+            <p>{error}</p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-2" 
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+        
         {/* Coupons Grid */}
-        <div className="grid grid-cols-1 gap-4">
-          {filteredAndSortedCoupons.map((coupon, index) => (
-            <Card key={coupon.id} className={`overflow-hidden hover:shadow-lg hover:scale-[1.02] transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${index * 100}`}>
-              <CardContent className="p-0">
-                <div className="flex">
-                  <div className="w-24 h-24 bg-gray-200 flex-shrink-0">
-                    <img 
-                      src={coupon.productImage} 
-                      alt={coupon.productName}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  
-                  <div className="flex-1 p-3">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-sm line-clamp-1">{coupon.productName}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          <img 
-                            src={coupon.shopLogo} 
-                            alt={coupon.shopName}
-                            className="w-4 h-4 rounded-full"
-                          />
-                          <span className="text-xs text-gray-600">{coupon.shopName}</span>
+        {!loading && !error && (
+          <div className="grid grid-cols-1 gap-4">
+            {filteredAndSortedCoupons.map((coupon, index) => (
+              <Card key={coupon.id} className={`overflow-hidden hover:shadow-lg hover:scale-[1.02] transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${index * 100}`}>
+                <CardContent className="p-0">
+                  <div className="flex">
+                    <div className="w-24 h-24 bg-gray-200 flex-shrink-0">
+                      <img 
+                        src={coupon.product_image} 
+                        alt={coupon.product_name}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    
+                    <div className="flex-1 p-3">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-sm line-clamp-1">{coupon.product_name}</h3>
+                          <div className="flex items-center gap-2 mt-1">
+                            <img 
+                              src={coupon.shop_logo} 
+                              alt={coupon.shop_name}
+                              className="w-4 h-4 rounded-full"
+                            />
+                            <span className="text-xs text-gray-600">{coupon.shop_name}</span>
+                          </div>
                         </div>
-                      </div>
-                      <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs">
-                        <Coins className="w-3 h-3 mr-1" />
-                        {coupon.pointsCost}
-                      </Badge>
-                    </div>
-                    
-                    <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                      <div className="flex items-center gap-1">
-                        <MapPin className="w-3 h-3" />
-                        <span>{coupon.distance}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                        <span>{coupon.rating}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        <span>Exp: {coupon.expiryDate}</span>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg font-bold text-green-600">₹{coupon.discountedPrice}</span>
-                        <span className="text-xs text-gray-500 line-through">₹{coupon.originalPrice}</span>
+                        <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs">
+                          <Coins className="w-3 h-3 mr-1" />
+                          {coupon.points_cost}
+                        </Badge>
                       </div>
                       
-                      <Button
-                        size="sm"
-                        className="bg-primary hover:bg-primary/90"
-                        onClick={() => handleRedeem(coupon)}
-                      >
-                        <ShoppingBag className="w-4 h-4 mr-1" />
-                        Redeem
-                      </Button>
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                        <div className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3" />
+                          <span>{coupon.distance}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                          <span>{coupon.rating}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          <span>Exp: {coupon.expiry_date}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg font-bold text-green-600">₹{coupon.discounted_price}</span>
+                          <span className="text-xs text-gray-500 line-through">₹{coupon.original_price}</span>
+                        </div>
+                        
+                        <Button
+                          size="sm"
+                          className="bg-primary hover:bg-primary/90"
+                          onClick={() => handleRedeem(coupon)}
+                        >
+                          <ShoppingBag className="w-4 h-4 mr-1" />
+                          Redeem
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {filteredAndSortedCoupons.length === 0 && (
-          <div className="text-center py-12">
-            <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500">No coupons found</p>
-            <p className="text-sm text-gray-400">Try adjusting your search or filters</p>
+                </CardContent>
+              </Card>
+            ))}
+            
+            {filteredAndSortedCoupons.length === 0 && (
+              <div className="text-center py-12">
+                <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No coupons found</p>
+                <p className="text-sm text-gray-400">Try adjusting your search or filters</p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -241,7 +303,7 @@ export default function CouponStore() {
                 <DialogDescription className="mt-2">
                   {redeemedCoupon && (
                     <span>
-                      "{redeemedCoupon.productName}" has been successfully added to your wallet.
+                      "{redeemedCoupon.product_name}" has been successfully added to your wallet.
                     </span>
                   )}
                 </DialogDescription>

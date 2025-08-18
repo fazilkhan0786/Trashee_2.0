@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,31 +8,45 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ArrowLeft, Search, MapPin, Navigation, Filter, Trash2, Clock, Users, Star, Store } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DashboardMap, { MapMarker } from '@/components/DashboardMap';
+import { getLocations, Location } from '@/lib/locationsService';
 
-interface MapLocation {
-  id: string;
-  type: 'bin' | 'partner';
-  name: string;
-  address: string;
-  pincode: string;
-  fillLevel?: number;
-  lastScanned?: string;
-  lastScannedBy?: string;
-  distance: string;
-  status: 'active' | 'inactive' | 'full' | 'maintenance';
-  rating?: number;
-}
-
+// Using the Location interface from locationsService
 export default function ConsumerMap() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [sortBy, setSortBy] = useState('distance');
-  const [selectedLocation, setSelectedLocation] = useState<MapLocation | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const locations: MapLocation[] = [
+  // Load locations from Supabase
+  useEffect(() => {
+    async function loadLocations() {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const { success, data, error } = await getLocations();
+        
+        if (!success || error) {
+          console.error('Error fetching locations:', error);
+          setError('Failed to load locations. Please try again');
+          return;
+        }
+        
+        setLocations(data || []);
+      } catch (err) {
+        console.error('Unexpected error loading locations:', err);
+        setError('An unexpected error occurred. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
     
-  ];
+    loadLocations();
+  }, []);
 
   // Convert locations to map markers
   const mapMarkers: MapMarker[] = locations
@@ -49,15 +63,15 @@ export default function ConsumerMap() {
     })
     .map(location => ({
       id: location.id,
-      lat: 28.6139 + (Math.random() - 0.5) * 0.02, // Random coordinates around Ahmedabad
-      lng: 77.2090 + (Math.random() - 0.5) * 0.02,
+      lat: location.latitude || 28.6139 + (Math.random() - 0.5) * 0.02, // Use actual coordinates or random around Ahmedabad
+      lng: location.longitude || 77.2090 + (Math.random() - 0.5) * 0.02,
       label: location.name,
       type: location.status === 'active' ? 'success' : 
             location.status === 'full' ? 'error' : 
             location.status === 'maintenance' ? 'warning' : 'default',
       info: location.type === 'bin' 
-        ? `${location.fillLevel}% full • ${location.lastScanned} • ${location.distance}`
-        : `${location.rating}★ rating • ${location.distance} • Partner Store`
+        ? `${location.fill_level || 0}% full • ${location.last_scanned || 'Never'} • ${location.distance}`
+        : `${location.rating || 0}★ rating • ${location.distance} • Partner Store`
     }));
 
   const handleMarkerClick = (marker: MapMarker) => {
@@ -157,131 +171,157 @@ export default function ConsumerMap() {
           </CardContent>
         </Card>
 
-        {/* Map Section */}
-        <DashboardMap
-          center={mapCenter}
-          zoom={13}
-          markers={mapMarkers}
-          height="h-80"
-          title="Interactive Map"
-          onMarkerClick={handleMarkerClick}
-          className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100"
-        />
-
-        {/* Locations List */}
-        <div className="space-y-3">
-          {filteredLocations.map((location, index) => (
-            <Card 
-              key={location.id} 
-              className={`hover:shadow-lg hover:scale-[1.02] transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${(index + 2) * 100}`}
+        {/* Loading and Error States */}
+        {loading && (
+          <div className="flex justify-center items-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+            <span className="ml-2">Loading locations...</span>
+          </div>
+        )}
+        
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md">
+            <p>{error}</p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-2" 
+              onClick={() => window.location.reload()}
             >
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                    location.type === 'bin' 
-                      ? location.fillLevel && location.fillLevel > 80 
-                        ? 'bg-red-100' 
-                        : location.fillLevel && location.fillLevel < 50
-                        ? 'bg-green-100'
-                        : 'bg-yellow-100'
-                      : 'bg-blue-100'
-                  }`}>
-                    {location.type === 'bin' ? (
-                      <Trash2 className={`w-6 h-6 ${
-                        location.fillLevel && location.fillLevel > 80 ? 'text-red-600' : 
-                        location.fillLevel && location.fillLevel < 50 ? 'text-green-600' : 'text-yellow-600'
-                      }`} />
-                    ) : (
-                      <Store className="w-6 h-6 text-blue-600" />
-                    )}
-                  </div>
-                  
-                  <div className="flex-1">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h3 className="font-semibold">{location.name}</h3>
-                        <div className="flex items-center gap-1 text-sm text-gray-500">
-                          <MapPin className="w-3 h-3" />
-                          <span>{location.address}</span>
-                        </div>
-                        <p className="text-xs text-gray-400">PIN: {location.pincode}</p>
-                      </div>
-                      
-                      <div className="text-right">
-                        <Badge variant="outline" className="text-xs mb-1">
-                          {location.distance}
-                        </Badge>
-                        {location.type === 'partner' && location.rating && (
-                          <div className="flex items-center gap-1 text-xs">
-                            <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                            <span>{location.rating}</span>
-                          </div>
-                        )}
-                      </div>
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {/* Map Section */}
+        {!loading && !error && (
+          <DashboardMap
+            center={mapCenter}
+            zoom={13}
+            markers={mapMarkers}
+            height="h-80"
+            title="Interactive Map"
+            onMarkerClick={handleMarkerClick}
+            className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100"
+          />
+        )}
+
+                {/* Locations List */}
+        {!loading && !error && (
+          <div className="space-y-3">
+            {filteredLocations.map((location, index) => (
+              <Card 
+                key={location.id} 
+                className={`hover:shadow-lg hover:scale-[1.02] transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${(index + 2) * 100}`}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                      location.type === 'bin' 
+                        ? location.fill_level && location.fill_level > 80 
+                          ? 'bg-red-100' 
+                          : location.fill_level && location.fill_level < 50
+                          ? 'bg-green-100'
+                          : 'bg-yellow-100'
+                        : 'bg-blue-100'
+                    }`}>
+                      {location.type === 'bin' ? (
+                        <Trash2 className={`w-6 h-6 ${
+                          location.fill_level && location.fill_level > 80 ? 'text-red-600' : 
+                          location.fill_level && location.fill_level < 50 ? 'text-green-600' : 'text-yellow-600'
+                        }`} />
+                      ) : (
+                        <Store className="w-6 h-6 text-blue-600" />
+                      )}
                     </div>
                     
-                    {location.type === 'bin' && (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-600">Fill Level:</span>
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 h-2 bg-gray-200 rounded-full">
-                              <div 
-                                className={`h-full rounded-full ${
-                                  location.fillLevel! < 50 ? 'bg-green-500' :
-                                  location.fillLevel! < 80 ? 'bg-yellow-500' : 'bg-red-500'
-                                }`}
-                                style={{ width: `${location.fillLevel}%` }}
-                              ></div>
-                            </div>
-                            <span className={getFillLevelColor(location.fillLevel)}>
-                              {location.fillLevel}%
-                            </span>
+                    <div className="flex-1">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h3 className="font-semibold">{location.name}</h3>
+                          <div className="flex items-center gap-1 text-sm text-gray-500">
+                            <MapPin className="w-3 h-3" />
+                            <span>{location.address}</span>
                           </div>
+                          <p className="text-xs text-gray-400">PIN: {location.pincode}</p>
                         </div>
                         
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-600">Last Scanned:</span>
-                          <div className="flex items-center gap-1">
-                            <Users className="w-3 h-3 text-gray-500" />
-                            <span>{location.lastScannedBy}</span>
-                            <span className="text-gray-400">•</span>
-                            <Clock className="w-3 h-3 text-gray-500" />
-                            <span>{location.lastScanned}</span>
-                          </div>
+                        <div className="text-right">
+                          <Badge variant="outline" className="text-xs mb-1">
+                            {location.distance}
+                          </Badge>
+                          {location.type === 'partner' && location.rating && (
+                            <div className="flex items-center gap-1 text-xs">
+                              <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                              <span>{location.rating}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    )}
-                    
-                    <div className="flex justify-between items-center mt-3">
-                      <Badge variant={
-                        location.status === 'active' ? 'default' : 
-                        location.status === 'full' ? 'destructive' : 
-                        location.status === 'maintenance' ? 'secondary' : 'outline'
-                      }>
-                        {location.status}
-                      </Badge>
                       
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => setSelectedLocation(location)}
-                      >
-                        View Details
-                      </Button>
+                      {location.type === 'bin' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-600">Fill Level:</span>
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 h-2 bg-gray-200 rounded-full">
+                                <div 
+                                  className={`h-full rounded-full ${
+                                    location.fill_level! < 50 ? 'bg-green-500' :
+                                    location.fill_level! < 80 ? 'bg-yellow-500' : 'bg-red-500'
+                                  }`}
+                                  style={{ width: `${location.fill_level}%` }}
+                                ></div>
+                              </div>
+                              <span className={getFillLevelColor(location.fill_level)}>
+                                {location.fill_level}%
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-600">Last Scanned:</span>
+                            <div className="flex items-center gap-1">
+                              <Users className="w-3 h-3 text-gray-500" />
+                              <span>{location.last_scanned_by}</span>
+                              <span className="text-gray-400">•</span>
+                              <Clock className="w-3 h-3 text-gray-500" />
+                              <span>{location.last_scanned}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="flex justify-between items-center mt-3">
+                        <Badge variant={
+                          location.status === 'active' ? 'default' : 
+                          location.status === 'full' ? 'destructive' : 
+                          location.status === 'maintenance' ? 'secondary' : 'outline'
+                        }>
+                          {location.status}
+                        </Badge>
+                        
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => setSelectedLocation(location)}
+                        >
+                          View Details
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {filteredLocations.length === 0 && (
-          <div className="text-center py-12">
-            <MapPin className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500">No locations found</p>
-            <p className="text-sm text-gray-400">Try adjusting your search or filters</p>
+                </CardContent>
+              </Card>
+            ))}
+            
+            {filteredLocations.length === 0 && (
+              <div className="text-center py-12">
+                <MapPin className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No locations found</p>
+                <p className="text-sm text-gray-400">Try adjusting your search or filters</p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -330,27 +370,27 @@ export default function ConsumerMap() {
                 <div className="p-3 bg-gray-50 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm text-gray-600">Current Fill Level:</span>
-                    <span className={`font-bold ${getFillLevelColor(selectedLocation.fillLevel)}`}>
-                      {selectedLocation.fillLevel}%
+                    <span className={`font-bold ${getFillLevelColor(selectedLocation.fill_level)}`}>
+                      {selectedLocation.fill_level}%
                     </span>
                   </div>
                   <div className="w-full h-3 bg-gray-200 rounded-full">
                     <div 
                       className={`h-full rounded-full ${
-                        selectedLocation.fillLevel! < 50 ? 'bg-green-500' :
-                        selectedLocation.fillLevel! < 80 ? 'bg-yellow-500' : 'bg-red-500'
+                        selectedLocation.fill_level! < 50 ? 'bg-green-500' :
+                        selectedLocation.fill_level! < 80 ? 'bg-yellow-500' : 'bg-red-500'
                       }`}
-                      style={{ width: `${selectedLocation.fillLevel}%` }}
+                      style={{ width: `${selectedLocation.fill_level}%` }}
                     ></div>
                   </div>
                   <div className="flex items-center justify-between text-sm text-gray-500 mt-2">
                     <div className="flex items-center gap-1">
                       <Users className="w-3 h-3" />
-                      <span>Last scanned by: {selectedLocation.lastScannedBy}</span>
+                      <span>Last scanned by: {selectedLocation.last_scanned_by}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      <span>{selectedLocation.lastScanned}</span>
+                      <span>{selectedLocation.last_scanned}</span>
                     </div>
                   </div>
                 </div>

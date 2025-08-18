@@ -686,14 +686,15 @@ export default function ConsumerProfile() {
                   >
                     Terms of Service
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => handleAppInfo('privacy')}
-                  >
-                    Privacy Policy
-                  </Button>
+                  <a
+                    href="https://dprofiz.com/privacy-policy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                <Button variant="outline" size="sm" className="flex-1">
+                  Privacy Policy
+                </Button>
+              </a>
                 </div>
               </CardContent>
             </Card>

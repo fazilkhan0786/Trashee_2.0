@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,53 +6,79 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ArrowLeft, Wallet, QrCode, Download, Calendar, Clock, FileImage, FileText, Coins, Gift, History, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getOwnedCoupons, OwnedCoupon } from '@/lib/couponStoreService';
+import { getUserTransactionHistory, TransactionHistory } from '@/lib/transactionHistoryService';
+import { getUserScanHistory } from '@/lib/scanHistoryService';
+import { supabase } from '@/lib/supabase';
 
-interface RedeemedCoupon {
-  id: string;
-  productName: string;
-  shopName: string;
-  shopLogo: string;
-  productImage: string;
-  value: number;
-  discountedPrice: number;
-  redeemedDate: string;
-  expiryDate: string;
-  status: 'active' | 'expired' | 'used';
-  qrCode: string;
-  shopAddress: string;
-  shopPhone: string;
-}
-
-interface ScanHistoryItem {
-  id: string;
-  binId: string;
-  location: string;
-  timestamp: string;
-  points: number;
-  type: 'scan' | 'ad' | 'referral';
-}
-
-interface PaymentHistoryItem {
-  id: string;
-  type: 'coupon_redemption' | 'points_earned';
-  description: string;
-  amount: number;
-  date: string;
-  status: 'completed' | 'pending' | 'failed';
-}
-
+// Using interfaces from services
 export default function ConsumerWallet() {
   const navigate = useNavigate();
-  const [selectedCoupon, setSelectedCoupon] = useState<RedeemedCoupon | null>(null);
+  const [selectedCoupon, setSelectedCoupon] = useState<OwnedCoupon | null>(null);
   const [showQRCode, setShowQRCode] = useState(false);
+  const [redeemedCoupons, setRedeemedCoupons] = useState<OwnedCoupon[]>([]);
+  const [scanHistory, setScanHistory] = useState<any[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<TransactionHistory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleDownloadInvoice = (payment: PaymentHistoryItem) => {
+  // Load wallet data from Supabase
+  useEffect(() => {
+    async function loadWalletData() {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Get current user
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (!user) {
+          navigate('/login', { replace: true });
+          return;
+        }
+        
+        // Load redeemed coupons
+        const { success: couponsSuccess, data: couponsData, error: couponsError } = await getOwnedCoupons(user.id);
+        if (couponsSuccess) {
+          setRedeemedCoupons(couponsData || []);
+        } else {
+          console.error('Error fetching redeemed coupons:', couponsError);
+        }
+        
+        // Load scan history
+        const { success: scanSuccess, data: scanData, error: scanError } = await getUserScanHistory(user.id);
+        if (scanSuccess) {
+          setScanHistory(scanData || []);
+        } else {
+          console.error('Error fetching scan history:', scanError);
+        }
+        
+        // Load transaction history
+        const { success: transactionSuccess, data: transactionData, error: transactionError } = await getUserTransactionHistory(user.id);
+        if (transactionSuccess) {
+          setPaymentHistory(transactionData || []);
+        } else {
+          console.error('Error fetching transaction history:', transactionError);
+        }
+        
+      } catch (err) {
+        console.error('Unexpected error loading wallet data:', err);
+        setError('An unexpected error occurred. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadWalletData();
+  }, [navigate]);
+
+  const handleDownloadInvoice = (payment: TransactionHistory) => {
     // Generate invoice content
     const invoiceContent = `
 TRASHEE INVOICE
 ================
 Invoice ID: ${payment.id}
-Date: ${payment.date}
+Date: ${new Date(payment.created_at).toLocaleString()}
 Description: ${payment.description}
 Amount: ${payment.amount} points
 Status: ${payment.status}
@@ -69,26 +95,16 @@ Thank you for using Trashee!
     window.URL.revokeObjectURL(url);
   };
 
-  const redeemedCoupons: RedeemedCoupon[] = [
-    
-  ];
+  // Data is loaded from Supabase in useEffect
 
-  const scanHistory: ScanHistoryItem[] = [
-    
-  ];
-
-  const paymentHistory: PaymentHistoryItem[] = [
-    
-  ];
-
-  const downloadCouponAsImage = (coupon: RedeemedCoupon) => {
+  const downloadCouponAsImage = (coupon: OwnedCoupon) => {
     // Simulate download
-    console.log(`Downloading ${coupon.productName} as image`);
+    console.log(`Downloading ${coupon.product_name} as image`);
   };
 
-  const downloadCouponAsPDF = (coupon: RedeemedCoupon) => {
+  const downloadCouponAsPDF = (coupon: OwnedCoupon) => {
     // Simulate download
-    console.log(`Downloading ${coupon.productName} as PDF`);
+    console.log(`Downloading ${coupon.product_name} as PDF`);
   };
 
   const getDaysUntilExpiry = (expiryDate: string) => {
@@ -143,21 +159,21 @@ Thank you for using Trashee!
                 <CardContent className="p-4">
                   <div className="flex gap-4">
                     <img 
-                      src={coupon.productImage}
-                      alt={coupon.productName}
+                      src={coupon.product_image}
+                      alt={coupon.product_name}
                       className="w-20 h-20 rounded-lg object-cover"
                     />
                     <div className="flex-1">
                       <div className="flex items-start justify-between mb-2">
                         <div>
-                          <h3 className="font-semibold">{coupon.productName}</h3>
+                          <h3 className="font-semibold">{coupon.product_name}</h3>
                           <div className="flex items-center gap-2 mt-1">
                             <img 
-                              src={coupon.shopLogo}
-                              alt={coupon.shopName}
+                              src={coupon.shop_logo}
+                              alt={coupon.shop_name}
                               className="w-4 h-4 rounded-full"
                             />
-                            <span className="text-sm text-gray-600">{coupon.shopName}</span>
+                            <span className="text-sm text-gray-600">{coupon.shop_name}</span>
                           </div>
                         </div>
                         <Badge variant={
@@ -172,15 +188,15 @@ Thank you for using Trashee!
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-1">
                             <Calendar className="w-3 h-3" />
-                            <span>Expires: {coupon.expiryDate}</span>
+                            <span>Expires: {coupon.expiry_date}</span>
                           </div>
                           {coupon.status === 'active' && (
                             <div className="flex items-center gap-1">
                               <Bell className="w-3 h-3" />
                               <span className={
-                                getDaysUntilExpiry(coupon.expiryDate) <= 7 ? 'text-red-600 font-medium' : ''
+                                getDaysUntilExpiry(coupon.expiry_date) <= 7 ? 'text-red-600 font-medium' : ''
                               }>
-                                {getDaysUntilExpiry(coupon.expiryDate)} days left
+                                {getDaysUntilExpiry(coupon.expiry_date)} days left
                               </span>
                             </div>
                           )}
@@ -189,7 +205,7 @@ Thank you for using Trashee!
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="text-lg font-bold text-green-600">₹{coupon.discountedPrice}</span>
+                          <span className="text-lg font-bold text-green-600">₹{coupon.discounted_price}</span>
                           <span className="text-sm text-gray-500 line-through">₹{coupon.value}</span>
                         </div>
                         
