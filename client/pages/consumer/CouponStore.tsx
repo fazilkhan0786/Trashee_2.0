@@ -3,9 +3,19 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ArrowLeft, Search, Filter, MapPin, Calendar, Coins, Star, ShoppingBag, Wallet, CheckCircle } from 'lucide-react';
+import { 
+  Select, SelectContent, SelectItem, 
+  SelectTrigger, SelectValue 
+} from '@/components/ui/select';
+import { 
+  Dialog, DialogContent, DialogDescription, 
+  DialogFooter, DialogHeader, DialogTitle 
+} from '@/components/ui/dialog';
+import { 
+  ArrowLeft, Search, Filter, MapPin, 
+  Calendar, Coins, Star, ShoppingBag, 
+  Wallet, CheckCircle 
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { safeNavigateBack } from '@/lib/navigation';
 import { getCoupons, redeemCoupon, Coupon } from '@/lib/couponStoreService';
@@ -80,11 +90,13 @@ export default function CouponStore() {
         case 'points-high':
           return b.points_cost - a.points_cost;
         case 'distance':
-          return parseFloat(a.distance) - parseFloat(b.distance);
+          const distA = parseFloat(a.distance || '99999');
+          const distB = parseFloat(b.distance || '99999');
+          return distA - distB;
         case 'expiry':
           return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
         case 'rating':
-          return b.rating - a.rating;
+          return (b.rating || 0) - (a.rating || 0);
         default:
           return 0;
       }
@@ -100,14 +112,15 @@ export default function CouponStore() {
         return;
       }
 
+      // Call backend-secured redeem logic
       const { success, error } = await redeemCoupon(coupon.id);
       
       if (!success || error) {
         console.error('Error redeeming coupon:', error);
-        alert('Failed to redeem coupon. Please try again.');
+        alert(typeof error === 'string' ? error : (error as any)?.message || 'Failed to redeem coupon. Please try again.');
         return;
       }
-      
+
       setRedeemedCoupon(coupon);
       setShowSuccessModal(true);
     } catch (err) {
@@ -213,7 +226,10 @@ export default function CouponStore() {
         {!loading && !error && (
           <div className="grid grid-cols-1 gap-4">
             {filteredAndSortedCoupons.map((coupon, index) => (
-              <Card key={coupon.id} className={`overflow-hidden hover:shadow-lg hover:scale-[1.02] transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${index * 100}`}>
+              <Card 
+                key={coupon.id} 
+                className={`overflow-hidden hover:shadow-lg hover:scale-[1.02] transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${index * 100}`}
+              >
                 <CardContent className="p-0">
                   <div className="flex">
                     <div className="w-24 h-24 bg-gray-200 flex-shrink-0">

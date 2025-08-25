@@ -1,27 +1,63 @@
-import React, { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Camera, QrCode, MapPin, Clock, Coins, CheckCircle, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
-import { addScanHistory } from '@/lib/scanHistoryService';
-import { updateLastScanned } from '@/lib/locationsService';
+import React, { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  ArrowLeft,
+  Camera,
+  Clock,
+  CheckCircle,
+  X,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/lib/supabase";
+import { QrReader } from "react-qr-reader"; // ✅ correct import for v3+
 
 export default function ConsumerScanner() {
   const navigate = useNavigate();
   const [isScanning, setIsScanning] = useState(false);
   const [lastScan, setLastScan] = useState<any>(null);
   const [cooldownTime, setCooldownTime] = useState(0);
-  const [scanHistory, setScanHistory] = useState([
-    
-  ]);
+  const [scanHistory, setScanHistory] = useState<any[]>([]);
+  const [noQrMessage, setNoQrMessage] = useState(false);
 
+  // Fetch scan history on load
+  useEffect(() => {
+    fetchScanHistory();
+  }, []);
+
+  const fetchScanHistory = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("scan_history")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    if (!error) {
+      setScanHistory(data || []);
+    } else {
+      console.error("Error fetching scan history:", error);
+    }
+  };
+
+  // Handle cooldown countdown
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (cooldownTime > 0) {
       interval = setInterval(() => {
-        setCooldownTime(prev => prev - 1);
+        setCooldownTime((prev) => prev - 1);
       }, 1000);
     }
     return () => clearInterval(interval);
@@ -30,84 +66,89 @@ export default function ConsumerScanner() {
   const formatCooldownTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
   };
 
-  const simulateQRScan = async () => {
-    setIsScanning(true);
-    
-    // Simulate scanning delay
-    setTimeout(async () => {
-      const success = Math.random() > 0.3; // 70% success rate
-      
-      if (success) {
-        // Generate random bin ID and location
-        const binId = `BIN-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`;
-        const location = ['Green Park, Sector 15', 'Metro Station, Block A', 'Shopping Mall, Level 2', 'City Center, Plaza'][Math.floor(Math.random() * 4)];
-        const points = 15;
-        const scanType = ['organic', 'plastic', 'paper', 'general'][Math.floor(Math.random() * 4)] as 'organic' | 'plastic' | 'paper' | 'general';
-        
-        // Create scan data for display
-        const newScan = {
-          id: binId,
-          location: location,
-          timestamp: new Date().toLocaleString('en-IN', { 
-            year: 'numeric', 
-            month: '2-digit', 
-            day: '2-digit', 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          }),
-          points: points
-        };
-        
-        // Save to Supabase using scanHistoryService
-        try {
-          const { success, data, error } = await addScanHistory({
-            bin_id: binId,
-            location: location,
-            points: points,
-            scan_type: scanType,
-            status: 'completed'
-          });
-          
-          if (!success || error) {
-            console.error('Error saving scan history:', error);
-          } else {
-            console.log('Scan history saved successfully:', data);
-            
-            // Update the bin's last scanned information
-            // Note: In a real app, you'd get the actual bin ID from the QR code
-            // For now, we'll skip this as we don't have the actual bin ID
-            // const { success: updateSuccess, error: updateError } = await updateLastScanned(binId, user?.email || 'Unknown');
-            // if (!updateSuccess) {
-            //   console.error('Error updating bin last scanned:', updateError);
-            // }
-          }
-        } catch (err) {
-          console.error('Unexpected error saving scan history:', err);
-        }
-        
-        // Update UI
-        setLastScan(newScan);
-        setScanHistory(prev => [newScan, ...prev.slice(0, 4)]);
-        setCooldownTime(300); // 5 minutes cooldown
-      } else {
-        setLastScan({ error: 'No QR code detected' });
+  // Handle QR scan success
+  const handleScan = async (data: string) => {
+    if (data && isScanning && cooldownTime === 0) {
+      setIsScanning(false); // stop scanning after success
+      setNoQrMessage(false);
+      console.log("QR Code Detected:", data);
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        console.error("No user logged in");
+        return;
       }
-      
-      setIsScanning(false);
-    }, 2000);
+
+      // Assign random points
+      const points = Math.floor(Math.random() * 20) + 10; // 10–30 points
+      const location =
+        ["Green Park", "Metro Station", "Shopping Mall", "City Center"][
+          Math.floor(Math.random() * 4)
+        ];
+
+      // Save scan in Supabase
+      const { error: insertError } = await supabase.from("scan_history").insert({
+        user_id: user.id,
+        bin_id: data,
+        location,
+        points,
+        scan_type: "general",
+        status: "completed",
+      });
+
+      if (insertError) {
+        console.error("Error saving scan:", insertError);
+      }
+
+      // Update user_points table
+      const { data: existingPoints, error: fetchError } = await supabase
+        .from("user_points")
+        .select("points")
+        .eq("user_id", user.id)
+        .single();
+
+      if (fetchError && fetchError.code !== "PGRST116") {
+        console.error("Error fetching user points:", fetchError);
+      }
+
+      if (existingPoints) {
+        await supabase
+          .from("user_points")
+          .update({ points: existingPoints.points + points })
+          .eq("user_id", user.id);
+      } else {
+        await supabase
+          .from("user_points")
+          .insert({ user_id: user.id, points });
+      }
+
+      // Update UI
+      const newScan = {
+        id: data,
+        location,
+        timestamp: new Date().toLocaleString("en-IN"),
+        points,
+      };
+
+      setLastScan(newScan);
+      setCooldownTime(300); // 5 min cooldown
+      fetchScanHistory();
+    }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4 animate-in slide-in-from-top duration-500">
+      <div className="bg-white border-b border-gray-200 p-4">
         <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => navigate(-1)}
             className="p-2"
           >
@@ -115,14 +156,16 @@ export default function ConsumerScanner() {
           </Button>
           <div>
             <h1 className="text-xl font-bold">QR Scanner</h1>
-            <p className="text-sm text-gray-500">Scan trash bins to earn points</p>
+            <p className="text-sm text-gray-500">
+              Scan trash bins to earn points
+            </p>
           </div>
         </div>
       </div>
 
       <div className="p-4 space-y-6">
         {/* Scanner Interface */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
+        <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Camera className="w-5 h-5 text-green-600" />
@@ -133,58 +176,49 @@ export default function ConsumerScanner() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Camera Simulation */}
-            <div className="relative bg-gray-900 rounded-lg aspect-square overflow-hidden">
-              <div className="absolute inset-0 flex items-center justify-center">
-                {isScanning ? (
-                  <div className="text-center text-white">
-                    <div className="animate-pulse">
-                      <QrCode className="w-16 h-16 mx-auto mb-2" />
-                      <p>Scanning...</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-white">
-                    <Camera className="w-16 h-16 mx-auto mb-2 opacity-50" />
-                    <p className="opacity-75">Camera View</p>
-                  </div>
-                )}
-              </div>
-              
-              {/* Scanning overlay */}
-              <div className="absolute inset-0 border-2 border-white/30 rounded-lg">
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-green-400 rounded-lg"></div>
-              </div>
-            </div>
-
             {/* Scan Button */}
-            <Button 
-              onClick={simulateQRScan}
-              disabled={isScanning || cooldownTime > 0}
-              className="w-full bg-primary hover:bg-primary/90"
-              size="lg"
+            <Button
+              variant="default"
+              onClick={() => {
+                setIsScanning(true);
+                setNoQrMessage(false);
+              }}
+              disabled={cooldownTime > 0 || isScanning}
             >
-              {isScanning ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
-                  Scanning...
-                </>
-              ) : cooldownTime > 0 ? (
-                <>
-                  <Clock className="w-4 h-4 mr-2" />
-                  Cooldown: {formatCooldownTime(cooldownTime)}
-                </>
-              ) : (
-                <>
-                  <QrCode className="w-4 h-4 mr-2" />
-                  Start Scanning
-                </>
-              )}
+              {cooldownTime > 0
+                ? `Wait ${formatCooldownTime(cooldownTime)}`
+                : "Scan QR Code"}
             </Button>
+
+            {/* QR Reader visible only when scanning */}
+            {isScanning && (
+              <div style={{ width: "100%", marginTop: "10px" }}>
+              <QrReader
+                constraints={{ facingMode: "environment" }}
+                onResult={(result, error) => {
+                if (!!result) {
+                  handleScan(result.getText());
+             }
+             if (!!error) {
+                setNoQrMessage(true);
+               console.error("QR Scan Error:", error);
+      }
+    }}
+  />
+</div>
+
+            )}
+
+            {/* No QR feedback */}
+            {isScanning && noQrMessage && (
+              <p className="text-red-500 text-sm mt-2">
+                No QR code detected. Please try again.
+              </p>
+            )}
 
             {/* Cooldown info */}
             {cooldownTime > 0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mt-2">
                 <div className="flex items-center gap-2 text-orange-800">
                   <Clock className="w-4 h-4" />
                   <span className="text-sm">
@@ -210,50 +244,16 @@ export default function ConsumerScanner() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {lastScan.error ? (
-                <div className="text-center py-4">
-                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <X className="w-8 h-8 text-red-600" />
-                  </div>
-                  <p className="text-red-600 font-medium">{lastScan.error}</p>
-                  <p className="text-sm text-gray-500 mt-1">Please try again with a valid QR code</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <CheckCircle className="w-8 h-8 text-green-600" />
-                    </div>
-                    <h3 className="text-lg font-bold text-green-800">Scan Successful!</h3>
-                    <p className="text-green-600">You earned 15 points</p>
-                  </div>
-                  
-                  <div className="bg-green-50 rounded-lg p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Bin ID:</span>
-                      <Badge variant="outline">{lastScan.id}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Location:</span>
-                      <div className="flex items-center gap-1 text-sm">
-                        <MapPin className="w-4 h-4 text-gray-500" />
-                        <span>{lastScan.location}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Timestamp:</span>
-                      <span className="text-sm">{lastScan.timestamp}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Points Earned:</span>
-                      <div className="flex items-center gap-1">
-                        <Coins className="w-4 h-4 text-yellow-500" />
-                        <span className="font-bold text-green-600">+{lastScan.points}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+              <div className="space-y-3">
+                <p className="font-bold text-green-700">
+                  You earned {lastScan.points} points!
+                </p>
+                <p>
+                  Bin ID: <Badge>{lastScan.id}</Badge>
+                </p>
+                <p>Location: {lastScan.location}</p>
+                <p>{lastScan.timestamp}</p>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -266,26 +266,30 @@ export default function ConsumerScanner() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {scanHistory.map((scan, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <QrCode className="w-5 h-5 text-green-600" />
-                    </div>
+              {scanHistory.length > 0 ? (
+                scanHistory.map((scan, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-3 border rounded-lg"
+                  >
                     <div>
-                      <p className="font-medium">{scan.id}</p>
-                      <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <MapPin className="w-3 h-3" />
-                        <span>{scan.location}</span>
-                      </div>
-                      <p className="text-xs text-gray-500">{scan.timestamp}</p>
+                      <p className="font-medium">{scan.bin_id}</p>
+                      <p className="text-xs text-gray-500">
+                        {new Date(scan.created_at).toLocaleString("en-IN")}
+                      </p>
+                      <p className="text-xs text-gray-500">{scan.location}</p>
                     </div>
+                    <Badge
+                      variant="outline"
+                      className="text-green-600 border-green-200"
+                    >
+                      +{scan.points}
+                    </Badge>
                   </div>
-                  <Badge variant="outline" className="text-green-600 border-green-200">
-                    +{scan.points}
-                  </Badge>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-gray-500 text-sm">No scans yet</p>
+              )}
             </div>
           </CardContent>
         </Card>

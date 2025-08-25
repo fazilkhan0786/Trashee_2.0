@@ -1,383 +1,118 @@
-import React, { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, Search, Download, Calendar, MapPin, Trash2, QrCode, Coins } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
-import { getUserScanHistory, clearScanHistory, ScanHistoryItem as ScanHistoryItemType } from '@/lib/scanHistoryService';
-
-// Use the interface from scanHistoryService
-interface ScanHistoryItem {
-  id: string;
-  binId: string;
-  date: string;
-  time: string;
-  location: string;
-  points: number;
-  status: 'completed' | 'pending' | 'expired';
-}
+import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { getUserScanHistory } from "@/lib/scanHistoryService";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
 
 export default function ScanHistory() {
-  const navigate = useNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [dateRange, setDateRange] = useState('all');
-  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
+  const [scanHistory, setScanHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load scan history from Supabase
   useEffect(() => {
-    async function loadScanHistory() {
+    async function fetchScanHistory() {
+      setLoading(true);
       try {
-        setLoading(true);
-        setError(null);
-        
-        // Get current user
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (!user) {
-          navigate('/login', { replace: true });
+        // ✅ Get logged-in user
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+          setError("You must be logged in to view scan history");
+          setLoading(false);
           return;
         }
-        
-        // Get scan history from Supabase
-        const { success, data, error } = await getUserScanHistory(user.id);
-        
+
+        console.log("🔑 Auth user id:", user.id);
+
+        // ✅ Fetch profile.id (same UUID as auth.user.id)
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("id", user.id)
+          .single();
+
+        if (profileError || !profile) {
+          console.error("Profile lookup failed:", profileError?.message);
+          setError("Profile not found for this user");
+          setLoading(false);
+          return;
+        }
+
+        console.log("🧑 Profile id:", profile.id);
+
+        // ✅ Fetch scan history
+        const { success, data, error } = await getUserScanHistory(profile.id);
+
+        console.log("📜 Scan history result:", data);
+
         if (!success || error) {
-          console.error('Error fetching scan history:', error);
-          setError('Failed to scan history. Please try again');
-          return;
+          setError("Failed to load scan history. Please try again.");
+        } else {
+          setScanHistory(data || []);
         }
-        
-        if (!data || data.length === 0) {
-          // No error but empty data - this is a valid state
-          setScanHistory([]);
-          return;
-        }
-        
-        // Transform the data to match our component's expected format
-        const formattedHistory = data.map((item: any) => {
-          // Extract date and time from created_at
-          const createdAt = new Date(item.created_at);
-          const date = createdAt.toISOString().split('T')[0];
-          const time = createdAt.toTimeString().split(' ')[0].substring(0, 5);
-          
-          return {
-            id: item.id,
-            binId: item.bin_id || 'Unknown',
-            date,
-            time,
-            location: item.location || 'Unknown location',
-            points: item.points || 0,
-            status: item.status || 'completed'
-          };
-        });
-        
-        setScanHistory(formattedHistory);
       } catch (err) {
-        console.error('Unexpected error loading scan history:', err);
-        setError('An unexpected error occurred. Please try again.');
+        console.error("Unexpected error:", err);
+        setError("Something went wrong.");
       } finally {
         setLoading(false);
       }
     }
-    
-    loadScanHistory();
-  }, [navigate]);
 
-  const filteredHistory = scanHistory.filter(scan => {
-    const matchesSearch = scan.binId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         scan.location.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = filterStatus === 'all' || scan.status === filterStatus;
-    
-    // Date filtering
-    let matchesDate = true;
-    if (dateRange !== 'all') {
-      const scanDate = new Date(scan.date);
-      const today = new Date();
-      const daysDiff = Math.floor((today.getTime() - scanDate.getTime()) / (1000 * 60 * 60 * 24));
-      
-      switch (dateRange) {
-        case 'today':
-          matchesDate = daysDiff === 0;
-          break;
-        case 'week':
-          matchesDate = daysDiff <= 7;
-          break;
-        case 'month':
-          matchesDate = daysDiff <= 30;
-          break;
-        default:
-          matchesDate = true;
-      }
-    }
-    
-    return matchesSearch && matchesStatus && matchesDate;
-  });
-
-
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'expired': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const totalPoints = scanHistory.reduce((sum, scan) => sum + scan.points, 0);
-  const totalScans = scanHistory.length;
-  const completedScans = scanHistory.filter(scan => scan.status === 'completed').length;
-
-  const handleExportHistory = () => {
-    const csvContent = [
-      ['Date', 'Time', 'Bin ID', 'Location', 'Points', 'Status'].join(','),
-      ...filteredHistory.map(scan => [
-        scan.date,
-        scan.time,
-        scan.binId,
-        scan.location,
-        scan.points,
-        scan.status
-      ].join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'scan-history.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-  
-  const handleClearHistory = async () => {
-    if (!confirm('Are you sure you want to clear all scan history? This action cannot be undone.')) {
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        alert('You must be logged in to clear scan history');
-        return;
-      }
-      
-      // Clear scan history
-      const { success, error } = await clearScanHistory(user.id);
-      
-      if (!success || error) {
-        console.error('Error clearing scan history:', error);
-        alert('Failed to clear scan history. Please try again.');
-        return;
-      }
-      
-      // Update the UI
-      setScanHistory([]);
-      alert('Scan history cleared successfully!');
-    } catch (err) {
-      console.error('Unexpected error clearing scan history:', err);
-      alert('An unexpected error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    fetchScanHistory();
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => navigate(-1)}
-              className="p-2"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-            <div>
-              <h1 className="text-xl font-bold">Scan History</h1>
-              <p className="text-sm text-gray-500">View all your scanning activities</p>
+    <div className="min-h-screen bg-gray-50 p-4 space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Scan History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin" />
             </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleClearHistory} disabled={loading || scanHistory.length === 0}>
-              <Trash2 className="w-4 h-4 mr-2" />
-              Clear History
-            </Button>
-            <Button variant="outline" onClick={handleExportHistory} disabled={loading || scanHistory.length === 0}>
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="p-4 space-y-4">
-        {/* Stats Overview */}
-        <div className="grid grid-cols-3 gap-4">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
-            <CardContent className="p-4 text-center">
-              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <QrCode className="w-5 h-5 text-blue-600" />
-              </div>
-              <p className="text-2xl font-bold">{totalScans}</p>
-              <p className="text-xs text-gray-600">Total Scans</p>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500 delay-100">
-            <CardContent className="p-4 text-center">
-              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Coins className="w-5 h-5 text-green-600" />
-              </div>
-              <p className="text-2xl font-bold">{totalPoints}</p>
-              <p className="text-xs text-gray-600">Points Earned</p>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500 delay-200">
-            <CardContent className="p-4 text-center">
-              <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Calendar className="w-5 h-5 text-purple-600" />
-              </div>
-              <p className="text-2xl font-bold">{completedScans}</p>
-              <p className="text-xs text-gray-600">Completed</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Search and Filters */}
-        <div className="space-y-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <Input
-              placeholder="Search by bin ID or location..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          
-          <div className="flex gap-3">
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="flex-1">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="expired">Expired</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={dateRange} onValueChange={setDateRange}>
-              <SelectTrigger className="flex-1">
-                <SelectValue placeholder="Date Range" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Time</SelectItem>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="week">This Week</SelectItem>
-                <SelectItem value="month">This Month</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {/* Loading and Error States */}
-        {loading && (
-          <div className="flex justify-center items-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-            <span className="ml-2">Loading scan history...</span>
-          </div>
-        )}
-        
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md">
-            <p>{error}</p>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="mt-2" 
-              onClick={() => window.location.reload()}
-            >
-              Retry
-            </Button>
-          </div>
-        )}
-        
-        {/* Scan History List */}
-        {!loading && !error && (
-          <div className="space-y-3">
-            {filteredHistory.map((scan, index) => (
-              <Card key={scan.id} className={`hover:shadow-lg transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${(index + 1) * 100}`}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                        <QrCode className="w-6 h-6 text-green-600" />
-                      </div>
-                      
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-semibold">{scan.binId}</h3>
-                          <Badge className={getStatusColor(scan.status)}>
-                            {scan.status.charAt(0).toUpperCase() + scan.status.slice(1)}
-                          </Badge>
-                        </div>
-                        
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3" />
-                            {scan.date} at {scan.time}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <MapPin className="w-3 h-3" />
-                            {scan.location}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="text-right">
-                      <div className="flex items-center gap-1 text-green-600 font-semibold">
-                        <Coins className="w-4 h-4" />
-                        +{scan.points}
-                      </div>
-                      <p className="text-xs text-gray-500">{scan.id}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-
-        {!loading && !error && filteredHistory.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
-            <div className="bg-gray-100 rounded-full p-3 mb-2">
-              <QrCode className="w-6 h-6 text-gray-400" />
-            </div>
-            <h3 className="text-lg font-medium mb-1">No scan history found</h3>
-            <p className="text-sm text-gray-500 max-w-md">
-              {searchQuery ? 'Try a different search term or clear filters' : 'Start scanning bins to earn points and track your recycling activity'}
+          ) : error ? (
+            <p className="text-red-500 text-center">{error}</p>
+          ) : scanHistory.length === 0 ? (
+            <p className="text-gray-500 text-center py-6">
+              No scans recorded yet.
             </p>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="space-y-3">
+              {scanHistory.map((scan) => (
+                <div
+                  key={scan.id}
+                  className="p-3 border rounded hover:bg-gray-50 flex justify-between"
+                >
+                  <div>
+                    <p className="text-sm text-gray-600">
+                      Bin ID: {scan.trashbin_id || "N/A"}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      Date:{" "}
+                      {scan.scanned_at
+                        ? new Date(scan.scanned_at).toLocaleString()
+                        : scan.created_at
+                        ? new Date(scan.created_at).toLocaleString()
+                        : "Unknown"}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      Location: {scan.location || "Unknown"}
+                    </p>
+                  </div>
+                  <p className="font-semibold text-green-600">
+                    +{scan.points_awarded ?? 0} points
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
