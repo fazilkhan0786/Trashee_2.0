@@ -2,21 +2,25 @@
   "version": 2,
   "builds": [
     {
-      "src": "server/node-build.ts",
-      "use": "@vercel/node",
+      "src": "package.json",
+      "use": "@vercel/static-build",
       "config": {
-        "includeFiles": ["dist/spa/**"]
+        "distDir": "dist/spa"
       }
+    },
+    {
+      "src": "netlify/functions/api.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "server/node-build.ts"
+      "dest": "/netlify/functions/api.ts"
     },
     {
       "src": "/(.*)",
-      "dest": "server/node-build.ts"
+      "dest": "/dist/spa/index.html"
     }
   ]
 }
