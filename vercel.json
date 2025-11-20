@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server/node-build.ts",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": ["dist/spa/**"]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "server/node-build.ts"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "server/node-build.ts"
+    }
+  ]
+}
