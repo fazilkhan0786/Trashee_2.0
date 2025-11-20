@@ -5,8 +5,9 @@ import { createRoot } from "react-dom/client";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { useState, useEffect, Component } from "react";
+import { MobileOptimizations } from "@/lib/mobileOptimizations";
 
 // Import BottomNav directly (not lazy-loaded) since it's critical UI
 import BottomNav from "./components/ui/bottom-nav";
@@ -91,18 +92,20 @@ const LazyComponent = ({ importFn, fallback, name }: { importFn: () => Promise<a
   return <Component />;
 };
 
-// Import components with error handling
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { X, Star, Crown, Zap, Shield, Gift, Sparkles } from "lucide-react";
-import { useLocation } from "react-router-dom";
-
 const queryClient = new QueryClient();
 
 const AppContent = () => {
   const location = useLocation();
   const [showPremiumPopup, setShowPremiumPopup] = useState(false);
+
+  // Initialize mobile optimizations
+  useEffect(() => {
+    MobileOptimizations.initialize();
+    MobileOptimizations.setupBackButtonHandler();
+    MobileOptimizations.optimizePerformance();
+    MobileOptimizations.handleOrientationChange();
+    MobileOptimizations.setupNetworkMonitoring();
+  }, []);
 
   // Determine user type from current path
   const getUserType = () => {
@@ -184,6 +187,15 @@ const AppContent = () => {
             importFn={() => import("./pages/ForgotPassword")} 
             fallback={<div>Loading ForgotPassword...</div>}
             name="ForgotPassword"
+          />
+        } />
+        
+        {/* ✅ THE NEWLY ADDED ROUTE FOR THE PASSWORD UPDATE PAGE */}
+        <Route path="/update-password" element={
+          <LazyComponent
+            importFn={() => import("./pages/UpdatePasswordPage.tsx")}
+            fallback={<div>Loading Update Password...</div>}
+            name="UpdatePassword"
           />
         } />
 
@@ -309,7 +321,7 @@ const AppContent = () => {
             name="PartnerWallet"
           />
         } />
-        <Route path="/partner/coupon-store" element={
+        <Route path="/partner/coupons" element={
           <LazyComponent 
             importFn={() => import("./pages/partner/CouponStore")} 
             fallback={<div>Loading Partner Coupon Store...</div>}
@@ -344,14 +356,14 @@ const AppContent = () => {
             name="PartnerScanHistory"
           />
         } />
-        <Route path="/partner/refer-friends" element={
+        <Route path="/partner/refer" element={
           <LazyComponent 
             importFn={() => import("./pages/partner/ReferFriends")} 
             fallback={<div>Loading Partner Refer Friends...</div>}
             name="PartnerReferFriends"
           />
         } />
-        <Route path="/partner/watch-ads" element={
+        <Route path="/partner/ads" element={
           <LazyComponent 
             importFn={() => import("./pages/partner/WatchAds")} 
             fallback={<div>Loading Partner Watch Ads...</div>}
@@ -409,7 +421,7 @@ const AppContent = () => {
             name="CollectorWallet"
           />
         } />
-        <Route path="/collector/coupon-store" element={
+        <Route path="/collector/coupons" element={
           <LazyComponent 
             importFn={() => import("./pages/collector/CouponStore")} 
             fallback={<div>Loading Collector Coupon Store...</div>}
@@ -437,14 +449,14 @@ const AppContent = () => {
             name="CollectorScanHistory"
           />
         } />
-        <Route path="/collector/refer-friends" element={
+        <Route path="/collector/refer" element={
           <LazyComponent 
             importFn={() => import("./pages/collector/ReferFriends")} 
             fallback={<div>Loading Collector Refer Friends...</div>}
             name="CollectorReferFriends"
           />
         } />
-        <Route path="/collector/watch-ad" element={
+        <Route path="/collector/ads" element={
           <LazyComponent 
             importFn={() => import("./pages/collector/WatchAd")} 
             fallback={<div>Loading Collector Watch Ad...</div>}
@@ -467,14 +479,14 @@ const AppContent = () => {
             name="AdminProfile"
           />
         } />
-        <Route path="/admin/user-management" element={
+        <Route path="/admin/users" element={
           <LazyComponent 
             importFn={() => import("./pages/admin/UserManagement")} 
             fallback={<div>Loading User Management...</div>}
             name="AdminUserManagement"
           />
         } />
-        <Route path="/admin/bin-management" element={
+        <Route path="/admin/bins" element={
           <LazyComponent 
             importFn={() => import("./pages/admin/BinManagement")} 
             fallback={<div>Loading Bin Management...</div>}
@@ -488,7 +500,7 @@ const AppContent = () => {
             name="AdminQRManagement"
           />
         } />
-        <Route path="/admin/ad-management" element={
+        <Route path="/admin/ads" element={
           <LazyComponent 
             importFn={() => import("./pages/admin/AdManagement")} 
             fallback={<div>Loading Ad Management...</div>}
@@ -509,7 +521,7 @@ const AppContent = () => {
             name="AdminCollectorAssignment"
           />
         } />
-        <Route path="/admin/complaint-management" element={
+        <Route path="/admin/complaints" element={
           <LazyComponent 
             importFn={() => import("./pages/admin/ComplaintManagement")} 
             fallback={<div>Loading Complaint Management...</div>}
@@ -523,7 +535,7 @@ const AppContent = () => {
             name="AdminCouponManagement"
           />
         } />
-        <Route path="/admin/registration-management" element={
+        <Route path="/admin/registrations" element={
           <LazyComponent 
             importFn={() => import("./pages/admin/RegistrationManagement")} 
             fallback={<div>Loading Registration Management...</div>}
@@ -544,8 +556,6 @@ const AppContent = () => {
             name="AdminRewardManagement"
           />
         } />
-
-        {/* Add more routes as needed... */}
         
         {/* Fallback route */}
         <Route path="*" element={
@@ -571,7 +581,7 @@ const AppContent = () => {
         <BottomNav userType={userType} />
       )}
 
-      {/* Premium Popup - simplified for now */}
+      {/* Premium Popup */}
       {showPremiumPopup && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 m-4 max-w-md">
@@ -595,26 +605,25 @@ const AppContent = () => {
   );
 };
 
-const App = () => (
-  <ErrorBoundary>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <AppContent />
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
-  </ErrorBoundary>
-);
+// Main App component rendering logic
+const App = () => {
+  return (
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <BrowserRouter>
+            <AppContent />
+          </BrowserRouter>
+          <Toaster />
+          <Sonner />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
+  );
+};
 
-const container = document.getElementById("root")!;
-let root = (globalThis as any).__react_root__;
-
-if (!root) {
-  root = createRoot(container);
-  (globalThis as any).__react_root__ = root;
+const container = document.getElementById("root");
+if (container) {
+  const root = createRoot(container);
+  root.render(<App />);
 }
-
-root.render(<App />);

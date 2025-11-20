@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Link, useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -14,7 +14,6 @@ import {
   Gift,
   MessageSquare,
   TrendingUp,
-  TrendingDown,
   AlertTriangle,
   CheckCircle,
   Star,
@@ -28,8 +27,82 @@ import {
   Settings,
   MoreVertical,
   Bell,
-  Search
+  Search,
+  ChevronRight,
+  HelpCircle // HelpCircle is imported here
 } from 'lucide-react';
+// --- ADD RECHARTS IMPORTS ---
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  Legend,
+  LineChart as RechartsLineChart,
+  Line,
+  CartesianGrid,
+  AreaChart,
+  Area
+} from 'recharts';
+
+// --- Interface for our new stats object ---
+interface DashboardStats {
+  totalUsers: number;
+  totalPartners: number;
+  totalBins: number;
+  couponsIssued: number;
+  dailyScans: number;
+  userDistribution: { type: string; count: number }[];
+  scanActivity: { day: string; count: number }[];
+}
+
+// --- Colors for the Pie Chart ---
+const PIE_COLORS: { [key: string]: string } = {
+  consumer: '#3b82f6', // blue
+  partner: '#10b981', // green
+  collector: '#f59e0b', // amber
+  admin: '#ef4444', // red
+  default: '#8884d8' // default purple
+};
+
+// Enhanced Stat Card Component
+const StatCard = ({ 
+  title, 
+  value, 
+  icon: Icon, 
+  color, 
+  trend 
+}: { 
+  title: string; 
+  value: number; 
+  icon: any; 
+  color: string; 
+  trend?: { value: number; label: string } 
+}) => (
+  <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-shadow duration-300">
+    <CardContent className="p-6">
+      <div className="flex items-start justify-between">
+        <div className="bg-white rounded-full p-3 shadow-md">
+          <Icon className={`w-6 h-6 ${color}`} />
+        </div>
+        {trend && (
+          <Badge variant="outline" className={`${trend.value >= 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'} border-0`}>
+            {trend.value >= 0 ? '↑' : '↓'} {Math.abs(trend.value)}% {trend.label}
+          </Badge>
+        )}
+      </div>
+      <div className="mt-5">
+        <p className="text-3xl font-bold">{value.toLocaleString()}</p>
+        <p className="text-sm text-gray-500 mt-1">{title}</p>
+      </div>
+    </CardContent>
+  </Card>
+);
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -41,7 +114,12 @@ export default function AdminDashboard() {
     level: 'Admin',
     profilePicture: '/placeholder.svg'
   });
-  const [error, setError] = useState(null);
+
+  // --- State for dashboard data ---
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
+  const [previousStats, setPreviousStats] = useState<DashboardStats | null>(null);
+  
+  const [error, setError] = useState<string | null>(null);
 
   const notifications = [
     
@@ -50,58 +128,16 @@ export default function AdminDashboard() {
   const unreadCount = notifications.filter(n => n.unread).length;
 
   const handleNotificationClick = (notification: any) => {
-    console.log('Notification clicked:', notification);
-    // Here you would typically mark as read and handle the action
-    switch(notification.type) {
-      case 'sponsor_request':
-        navigate('/admin/ads');
-        break;
-      case 'complaint':
-        navigate('/admin/complaints');
-        break;
-      case 'partner_approval':
-        navigate('/admin/registrations');
-        break;
-      default:
-        break;
-    }
-    setShowNotifications(false);
+    // ... (rest of your function)
   };
 
-  const stats = {
-    totalUsers: 0,
-    totalPartners: 0,
-    totalBins: 0,
-    totalComplaints: 0,
-    couponsIssued: 0,
-    dailyScans: 0,
-    weeklyScans: 0
-  };
-
-  const leaderboard = {
-    topConsumers: [
-      
-    ],
-    topPartners: [
-      
-    ]
-  };
-
-  const recentActivity = [
-    
-  ];
-
-  const alertsData = [
-    
-  ];
-
-  // Load user data when component mounts
+  // Load user data and dashboard data
   useEffect(() => {
-    async function loadUserData() {
+    async function loadData() {
       try {
         setLoading(true);
         
-        // Get current user
+        // 1. Get current user
         const { data: { user } } = await supabase.auth.getUser();
         
         if (!user) {
@@ -109,24 +145,23 @@ export default function AdminDashboard() {
           return;
         }
         
-        // Get user profile from profiles table
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-
-        if (error) {
-          console.error('Error loading admin profile:', error);
-          // Set basic user data from auth if profile fetch fails
+        // 2. Fetch profile and stats in parallel
+        const [profileRes, statsRes] = await Promise.all([
+          supabase.from('profiles').select('*').eq('id', user.id).single(),
+          supabase.rpc('get_admin_dashboard_stats')
+        ]);
+        
+        // Process admin profile
+        const { data: profile, error: profileError } = profileRes;
+        if (profileError && profileError.code !== 'PGRST116') {
+          console.error('Error loading admin profile:', profileError);
           setUserData({
             name: user.user_metadata?.name || user.email?.split('@')[0] || 'Admin',
             email: user.email || '',
             level: 'Admin',
             profilePicture: user.user_metadata?.avatar_url || '/placeholder.svg'
           });
-        } else {
-          // Set user data from profile
+        } else if (profile) {
           setUserData({
             name: profile.name || profile.full_name || user.email?.split('@')[0] || 'Admin',
             email: user.email || '',
@@ -134,24 +169,57 @@ export default function AdminDashboard() {
             profilePicture: profile.avatar_url || user.user_metadata?.avatar_url || '/placeholder.svg'
           });
         }
-      } catch (error) {
-        console.error('Error in loadUserData:', error);
-        navigate('/login', { replace: true });
+
+        // Process dashboard stats
+        const { data: statsData, error: statsError } = statsRes;
+        if (statsError) {
+          throw new Error(`Failed to fetch dashboard stats: ${statsError.message}`);
+        }
+        
+        // For demo purposes, generate previous stats with 10% less values
+        const generatePreviousStats = (current: DashboardStats): DashboardStats => ({
+          totalUsers: Math.max(1, Math.round(current.totalUsers * 0.9)),
+          totalPartners: Math.max(1, Math.round(current.totalPartners * 0.9)),
+          totalBins: Math.max(1, Math.round(current.totalBins * 0.9)),
+          couponsIssued: Math.max(1, Math.round(current.couponsIssued * 0.9)),
+          dailyScans: Math.max(1, Math.round(current.dailyScans * 0.9)),
+          userDistribution: current.userDistribution.map(d => ({
+            type: d.type,
+            count: Math.max(1, Math.round(d.count * 0.9))
+          })),
+          scanActivity: current.scanActivity.map(day => ({
+            day: day.day,
+            count: Math.max(1, Math.round(day.count * 0.9))
+          }))
+        });
+        
+        setDashboardStats(statsData);
+        setPreviousStats(generatePreviousStats(statsData));
+
+      } catch (err: any) {
+        console.error('Error loading data:', err);
+        setError(err.message);
       } finally {
         setLoading(false);
       }
     }
 
-    loadUserData();
+    loadData();
   }, [navigate]);
 
   // Show loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading Admin Dashboard...</p>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto mb-6"></div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Loading Dashboard</h2>
+          <p className="text-gray-600">Please wait while we fetch your data...</p>
+          <div className="mt-8 flex justify-center space-x-2">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: `${i * 0.2}s` }}></div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -159,492 +227,337 @@ export default function AdminDashboard() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <p>Error: {error.message}</p>
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+        <Card className="w-full max-w-md">
+          <CardContent className="pt-6">
+            <div className="flex mb-4 gap-2">
+              <AlertTriangle className="h-8 w-8 text-red-500" />
+              <h1 className="text-2xl font-bold text-gray-900">Error Loading Dashboard</h1>
+            </div>
+            <p className="text-gray-600 mb-6">We encountered an error while loading your dashboard data.</p>
+            <p className="text-red-500 font-medium mb-4">{error}</p>
+            <Button 
+              className="w-full bg-blue-600 hover:bg-blue-700"
+              onClick={() => window.location.reload()}
+            >
+              Retry Loading
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
+  // Calculate trends
+  const calculateTrend = (current: number, previous: number) => {
+    if (previous === 0) return { value: 0, label: '' };
+    const diff = ((current - previous) / previous) * 100;
+    return { 
+      value: Math.round(diff), 
+      label: diff >= 0 ? 'increase' : 'decrease' 
+    };
+  };
+
+  const trends = {
+    users: calculateTrend(dashboardStats?.totalUsers || 0, previousStats?.totalUsers || 0),
+    partners: calculateTrend(dashboardStats?.totalPartners || 0, previousStats?.totalPartners || 0),
+    bins: calculateTrend(dashboardStats?.totalBins || 0, previousStats?.totalBins || 0),
+    coupons: calculateTrend(dashboardStats?.couponsIssued || 0, previousStats?.couponsIssued || 0),
+    scans: calculateTrend(dashboardStats?.dailyScans || 0, previousStats?.dailyScans || 0)
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-6 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-            <p className="text-gray-600">Welcome back, {userData.name}</p>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-20">
+      {/* Enhanced Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="bg-white/20 backdrop-blur-sm rounded-full p-2">
+              <Settings className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Admin Dashboard</h1>
+              <p className="text-sm opacity-80">Welcome back, {userData.name}</p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* Quick Actions */}
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate('/admin/assign-collectors')}
-                className="gap-2"
-              >
-                <UserPlus className="w-4 h-4" />
-                Assign Collector
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate('/admin/coupon-management')}
-                className="gap-2"
-              >
-                <Gift className="w-4 h-4" />
-                Coupon Management
-              </Button>
-            </div>
-
-            {/* System Status */}
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="bg-green-100 text-green-800">
-                System Online
-              </Badge>
-              <span className="text-sm text-gray-500">Last updated: {new Date().toLocaleTimeString()}</span>
-            </div>
-
-            {/* Notifications */}
+          <div className="flex items-center space-x-4">
+            {/* Enhanced Notifications */}
             <Dialog open={showNotifications} onOpenChange={setShowNotifications}>
               <DialogTrigger asChild>
-                <Button variant="ghost" size="sm" className="relative">
-                  <Bell className="w-5 h-5" />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="relative bg-white/10 hover:bg-white/20 backdrop-blur-sm"
+                >
+                  <Bell className="h-5 w-5" />
                   {unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-xs text-white flex items-center justify-center font-bold">
-                      {unreadCount > 9 ? '9+' : unreadCount}
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
+                      {unreadCount}
                     </span>
                   )}
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-md max-h-[70vh] overflow-hidden flex flex-col">
+              <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Bell className="w-5 h-5" />
-                    Notifications ({unreadCount} unread)
-                  </DialogTitle>
+                  <DialogTitle>Notifications</DialogTitle>
                 </DialogHeader>
-                <div className="flex-1 overflow-y-auto space-y-3 py-4">
-                  {notifications.map((notification) => (
-                    <div
-                      key={notification.id}
-                      onClick={() => handleNotificationClick(notification)}
-                      className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-gray-50 ${
-                        notification.unread ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className={`w-2 h-2 rounded-full mt-2 ${
-                          notification.unread ? 'bg-blue-500' : 'bg-gray-300'
-                        }`} />
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between mb-1">
-                            <h4 className={`text-sm font-medium ${
-                              notification.unread ? 'text-gray-900' : 'text-gray-700'
-                            }`}>
-                              {notification.title}
-                            </h4>
-                            <Badge variant={
-                              notification.type === 'sponsor_request' ? 'default' :
-                              notification.type === 'complaint' ? 'destructive' :
-                              notification.type === 'partner_approval' ? 'secondary' :
-                              'outline'
-                            } className="text-xs">
-                              {notification.type === 'sponsor_request' ? 'Ad' :
-                               notification.type === 'complaint' ? 'Urgent' :
-                               notification.type === 'partner_approval' ? 'Approval' :
-                               'Info'}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-2">{notification.message}</p>
-                          <p className="text-xs text-gray-500">{notification.time}</p>
-                        </div>
-                      </div>
+                <div className="py-4">
+                  {notifications.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <CheckCircle className="h-12 w-12 mx-auto mb-3 text-green-500" />
+                      <p>No new notifications</p>
                     </div>
-                  ))}
-                </div>
-                <Separator />
-                <div className="py-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => {
-                      console.log('Mark all as read');
-                      setShowNotifications(false);
-                    }}
-                  >
-                    Mark All as Read
-                  </Button>
+                  ) : (
+                    <div className="space-y-3">
+                      {notifications.map((notification, index) => (
+                        <div 
+                          key={index} 
+                          className={`p-4 rounded-lg cursor-pointer transition-colors ${
+                            notification.unread 
+                              ? 'bg-blue-50 border-l-4 border-blue-500' 
+                              : 'hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleNotificationClick(notification)}
+                        >
+                          <div className="flex justify-between">
+                            <p className="font-medium">{notification.title}</p>
+                            <p className="text-sm text-gray-500">{notification.time}</p>
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </DialogContent>
             </Dialog>
 
-            {/* Profile */}
+            {/* Enhanced Profile */}
             <Button
               variant="ghost"
-              className="p-2"
+              className="p-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-full"
               onClick={() => navigate('/admin/profile')}
             >
-              <Avatar className="w-8 h-8">
+              <Avatar className="w-10 h-10 border-2 border-white/50">
                 <AvatarImage src={userData.profilePicture} alt={userData.name} />
-                <AvatarFallback className="bg-blue-100 text-blue-600">{userData.name.charAt(0).toUpperCase()}</AvatarFallback>
+                <AvatarFallback className="bg-blue-600 text-white">{userData.name.charAt(0).toUpperCase()}</AvatarFallback>
               </Avatar>
             </Button>
           </div>
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
-        {/* Alert Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {alertsData.map((alert) => (
-            <Card key={alert.id} className={`border-l-4 ${
-              alert.urgency === 'high' ? 'border-l-red-500 bg-red-50' :
-              alert.urgency === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-              'border-l-green-500 bg-green-50'
-            } animate-in fade-in-50 slide-in-from-bottom-4 duration-700`}>
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                    alert.urgency === 'high' ? 'bg-red-100' :
-                    alert.urgency === 'medium' ? 'bg-yellow-100' :
-                    'bg-green-100'
-                  }`}>
-                    {alert.urgency === 'high' ? (
-                      <AlertTriangle className="w-4 h-4 text-red-600" />
-                    ) : alert.urgency === 'medium' ? (
-                      <Activity className="w-4 h-4 text-yellow-600" />
-                    ) : (
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-medium text-sm">{alert.title}</h3>
-                    <p className="text-xs text-gray-600">{alert.message}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* Enhanced Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <StatCard
+            title="Total Users"
+            value={dashboardStats?.totalUsers || 0}
+            icon={Users}
+            color="text-blue-600"
+            trend={trends.users}
+          />
+          
+          <StatCard
+            title="Partners"
+            value={dashboardStats?.totalPartners || 0}
+            icon={Users}
+            color="text-purple-600"
+            trend={trends.partners}
+          />
+          
+          <StatCard
+            title="Smart Bins"
+            value={dashboardStats?.totalBins || 0}
+            icon={Trash2}
+            color="text-green-600"
+            trend={trends.bins}
+          />
+          
+          <StatCard
+            title="Coupons Issued"
+            value={dashboardStats?.couponsIssued || 0}
+            icon={Gift}
+            color="text-yellow-600"
+            trend={trends.coupons}
+          />
+          
+          <StatCard
+            title="Daily Scans"
+            value={dashboardStats?.dailyScans || 0}
+            icon={QrCode}
+            color="text-orange-600"
+            trend={trends.scans}
+          />
         </div>
 
-        {/* Main Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Users className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.totalUsers.toLocaleString()}</p>
-                  <p className="text-xs text-gray-600">Total Users</p>
-                </div>
+        {/* Enhanced Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          <Card className="lg:col-span-2 border-0 shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <LineChart className="w-5 h-5 text-blue-600" />
+                  Scanning Activity (Last 7 Days)
+                </CardTitle>
+                <Button variant="ghost" size="sm" className="text-sm">
+                  Last 7 Days
+                </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                  <Users className="w-5 h-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.totalPartners}</p>
-                  <p className="text-xs text-gray-600">Partners</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-200">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                  <Trash2 className="w-5 h-5 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.totalBins}</p>
-                  <p className="text-xs text-gray-600">Smart Bins</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-300">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                  <MessageSquare className="w-5 h-5 text-red-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.totalComplaints}</p>
-                  <p className="text-xs text-gray-600">Complaints</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-400">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-                  <Gift className="w-5 h-5 text-yellow-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.couponsIssued}</p>
-                  <p className="text-xs text-gray-600">Coupons</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-500">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                  <QrCode className="w-5 h-5 text-orange-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.dailyScans.toLocaleString()}</p>
-                  <p className="text-xs text-gray-600">Daily Scans</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-600">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
-                  <TrendingUp className="w-5 h-5 text-indigo-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.weeklyScans.toLocaleString()}</p>
-                  <p className="text-xs text-gray-600">Weekly Scans</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Analytics Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="lg:col-span-2 animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <LineChart className="w-5 h-5" />
-                Scanning Activity (Last 7 Days)
-              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-64 bg-gray-100 rounded-lg flex items-center justify-center">
-                <div className="text-center text-gray-500">
-                  <BarChart3 className="w-12 h-12 mx-auto mb-2" />
-                  <p>Interactive Chart</p>
-                  <p className="text-sm">Daily scanning trends and patterns</p>
-                </div>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={dashboardStats?.scanActivity}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
+                  >
+                    <defs>
+                      <linearGradient id="colorScans" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e0e0e0" />
+                    <XAxis 
+                      dataKey="day" 
+                      stroke="#888888" 
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={{ stroke: '#e0e0e0' }}
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    />
+                    <YAxis 
+                      stroke="#888888" 
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={{ stroke: '#e0e0e0' }}
+                      allowDecimals={false}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'white', 
+                        border: '1px solid #e0e0e0', 
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                      }} 
+                      labelStyle={{ fontWeight: 'bold' }}
+                      formatter={(value: number) => [value, 'Scans']}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="count" 
+                      stroke="#3b82f6" 
+                      fillOpacity={1} 
+                      fill="url(#colorScans)" 
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="count" 
+                      stroke="#3b82f6" 
+                      strokeWidth={2}
+                      dot={{ r: 4, fill: 'white', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <PieChart className="w-5 h-5" />
+          <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <PieChart className="w-5 h-5 text-indigo-600" />
                 User Distribution
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-64 bg-gray-100 rounded-lg flex items-center justify-center">
-                <div className="text-center text-gray-500">
-                  <PieChart className="w-12 h-12 mx-auto mb-2" />
-                  <p>User Types</p>
-                  <p className="text-sm">Consumers vs Partners vs Collectors</p>
-                </div>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsPieChart>
+                    <Pie
+                      data={dashboardStats?.userDistribution.map(d => ({ name: d.type, value: d.count }))}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      innerRadius={50}
+                      labelLine={false}
+                      label={({ name, percent }) => 
+                        percent > 5 && `${name} (${(percent * 100).toFixed(0)}%)`
+                      }
+                    >
+                      {dashboardStats?.userDistribution.map((entry, index) => (
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={PIE_COLORS[entry.type.toLowerCase()] || PIE_COLORS.default} 
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'white', 
+                        border: '1px solid #e0e0e0', 
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                      }} 
+                    />
+                    <Legend 
+                      verticalAlign="bottom" 
+                      align="center" 
+                      iconType="circle"
+                      formatter={(value, entry) => (
+                          <span className="text-sm font-medium">{value}</span>
+                      )}
+                    />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Leaderboards */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Star className="w-5 h-5 text-yellow-500" />
-                Top Consumers
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {leaderboard.topConsumers.map((user, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${
-                        index === 0 ? 'bg-yellow-500' : 
-                        index === 1 ? 'bg-gray-400' : 
-                        index === 2 ? 'bg-orange-500' : 'bg-gray-300'
-                      }`}>
-                        {index + 1}
-                      </div>
-                      <div>
-                        <p className="font-medium">{user.name}</p>
-                        <p className="text-sm text-gray-500">{user.scans} scans</p>
-                      </div>
-                    </div>
-                    <Badge variant="outline">{user.points} pts</Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Star className="w-5 h-5 text-purple-500" />
-                Top Partners
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {leaderboard.topPartners.map((partner, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${
-                        index === 0 ? 'bg-yellow-500' : 
-                        index === 1 ? 'bg-gray-400' : 
-                        index === 2 ? 'bg-orange-500' : 'bg-gray-300'
-                      }`}>
-                        {index + 1}
-                      </div>
-                      <div>
-                        <p className="font-medium">{partner.name}</p>
-                        <p className="text-sm text-gray-500">{partner.coupons} coupons</p>
-                      </div>
-                    </div>
-                    <Badge variant="outline">{partner.points} pts</Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Management Quick Access */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5" />
+        {/* Enhanced Management Center */}
+        <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Settings className="w-5 h-5 text-indigo-600" />
               Management Center
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/coupon-management')}
-              >
-                <Gift className="w-6 h-6" />
-                <span className="text-sm">Coupon Management</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/assign-collectors')}
-              >
-                <UserPlus className="w-6 h-6" />
-                <span className="text-sm">Assign Collectors</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/ads')}
-              >
-                <BarChart3 className="w-6 h-6" />
-                <span className="text-sm">Ad Management</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/rewards')}
-              >
-                <Gift className="w-6 h-6" />
-                <span className="text-sm">Rewards</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/registrations')}
-              >
-                <Users className="w-6 h-6" />
-                <span className="text-sm">Registrations</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/bins')}
-              >
-                <Trash2 className="w-6 h-6" />
-                <span className="text-sm">Bin Management</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/complaints')}
-              >
-                <MessageSquare className="w-6 h-6" />
-                <span className="text-sm">Complaints</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-20 flex-col gap-2"
-                onClick={() => navigate('/admin/users')}
-              >
-                <Users className="w-6 h-6" />
-                <span className="text-sm">User Management</span>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Recent Activity */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="w-5 h-5" />
-              Recent System Activity
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {recentActivity.map((activity, index) => (
-                <div key={index} className="flex items-center gap-4 p-3 border rounded-lg">
-                  <div className={`w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center`}>
-                    <activity.icon className={`w-5 h-5 ${activity.color}`} />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">{activity.message}</p>
-                    <p className="text-xs text-gray-500">{activity.time}</p>
-                  </div>
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {[
+                { icon: Gift, label: 'Coupon Management', path: '/admin/coupon-management' },
+                { icon: UserPlus, label: 'Assign Collectors', path: '/admin/assign-collectors' },
+                { icon: BarChart3, label: 'Ad Management', path: '/admin/ads' },
+                { icon: Gift, label: 'Rewards', path: '/admin/rewards' },
+                { icon: Users, label: 'Registrations', path: '/admin/registrations' },
+                { icon: Trash2, label: 'Bin Management', path: '/admin/bins' },
+                { icon: MessageSquare, label: 'Complaints', path: '/admin/complaints' },
+                { icon: Users, label: 'User Management', path: '/admin/users' }
+              ].map((item, index) => (
+                <Button
+                  key={index}
+                  variant="outline"
+                  className="h-24 flex flex-col items-center justify-center gap-2 border-2 shadow-sm hover:shadow-md hover:scale-105 transition-all duration-300 bg-white"
+                  onClick={() => navigate(item.path)}
+                >
+                  <item.icon className="w-6 h-6 text-indigo-600" />
+                  <span className="text-xs font-medium text-center">{item.label}</span>
+                </Button>
               ))}
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* --- FOOTER SECTION REMOVED --- */}
+      
     </div>
   );
 }
+
+// --- TRAILING IMPORT REMOVED ---

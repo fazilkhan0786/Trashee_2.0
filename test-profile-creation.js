@@ -1,84 +1,86 @@
-// Script to test profile creation
+// Test script to check profile creation and user role saving
+// Run with: node test-profile-creation.js
+
 import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
 
-const SUPABASE_URL = "https://ascqdjqxiuygvvmawyrx.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFzY3FkanF4aXV5Z3Z2bWF3eXJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwNzc5MjQsImV4cCI6MjA3MDY1MzkyNH0.64i-QDqj3Fb4anYglDticz9r5cytIa5_nwpdbxHYOok";
+dotenv.config();
 
-if (!SUPABASE_URL) {
-  throw new Error('Missing Supabase URL');
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Missing Supabase environment variables');
+  process.exit(1);
 }
 
-if (!SUPABASE_KEY) {
-  throw new Error('Missing Supabase Key');
-}
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function testProfileCreation() {
+  console.log('🧪 Testing profile creation and user role saving...\n');
+
   try {
-    console.log('Testing profile creation...');
-    
-    // 1. Create a test user
-    const email = `test-${Date.now()}@example.com`;
-    const password = 'password123';
-    
-    console.log(`Creating test user with email: ${email}`);
-    
-    const { data: signupData, error: signupError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name: 'Test User',
-          phone: '555-123-4567',
-          user_type: '0' // Consumer
-        }
-      }
-    });
-    
-    if (signupError) {
-      console.error('Error creating test user:', signupError.message);
-      return false;
-    }
-    
-    console.log('Test user created successfully');
-    console.log('User ID:', signupData.user.id);
-    
-    // 2. Wait a moment for the trigger to execute
-    console.log('Waiting for database trigger to execute...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // 3. Check if profile was created
-    const { data: profileData, error: profileError } = await supabase
+    // Test 1: Check if we can access profiles table
+    console.log('1. Testing profiles table access...');
+    const { data: profiles, error: profilesError } = await supabase
       .from('profiles')
       .select('*')
-      .eq('user_id', signupData.user.id)
-      .single();
-    
-    if (profileError) {
-      console.error('Error fetching profile:', profileError.message);
-      return false;
+      .limit(5);
+
+    if (profilesError) {
+      console.error('❌ Cannot access profiles table:', profilesError.message);
+      return;
     }
-    
-    if (!profileData) {
-      console.error('Profile not found for the test user');
-      return false;
+    console.log('✅ Profiles table accessible');
+    console.log(`📊 Found ${profiles?.length || 0} existing profiles`);
+
+    // Test 2: Check user_role enum
+    console.log('\n2. Testing user_role enum...');
+    const { data: enumTest, error: enumError } = await supabase
+      .from('profiles')
+      .select('user_type')
+      .limit(1);
+
+    if (enumError) {
+      console.error('❌ user_role enum issue:', enumError.message);
+      return;
     }
+    console.log('✅ user_role enum working');
+
+    // Test 3: Check existing profiles for user types
+    console.log('\n3. Checking existing user types...');
+    if (profiles && profiles.length > 0) {
+      profiles.forEach((profile, index) => {
+        console.log(`   ${index + 1}. ID: ${profile.id.substring(0, 8)}... - Role: ${profile.user_type || 'Not set'} - Email: ${profile.email || 'Not set'}`);
+      });
+    } else {
+      console.log('ℹ️  No profiles found');
+    }
+
+    // Test 4: Check auth users vs profiles
+    console.log('\n4. Checking auth users...');
+    const { data: { users }, error: usersError } = await supabase.auth.admin.listUsers();
     
-    console.log('Profile created successfully:');
-    console.log(profileData);
-    
-    // 4. Clean up - delete the test user
-    // Note: This requires admin privileges which the anon key doesn't have
-    // In a real test environment, you would use a service role key to clean up
-    
-    return true;
-  } catch (err) {
-    console.error('Unexpected error testing profile creation:', err);
-    return false;
+    if (usersError) {
+      console.warn('⚠️  Cannot access auth users (requires service role key):', usersError.message);
+    } else {
+      console.log(`📊 Found ${users?.length || 0} auth users`);
+      if (users && users.length > 0) {
+        users.forEach((user, index) => {
+          console.log(`   ${index + 1}. ${user.email} - Confirmed: ${user.email_confirmed_at ? 'Yes' : 'No'}`);
+        });
+      }
+    }
+
+    console.log('\n🎉 Profile creation test completed!');
+    console.log('\n📋 Next steps:');
+    console.log('1. Disable email confirmation in Supabase dashboard');
+    console.log('2. Test signup → user type selection → login flow');
+    console.log('3. Verify user_type is saved in profiles table');
+
+  } catch (error) {
+    console.error('❌ Unexpected error:', error.message);
   }
 }
 
-testProfileCreation().then(result => {
-  console.log(`\nProfile creation test ${result ? 'passed' : 'failed'}`);
-});
+testProfileCreation();

@@ -5,11 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PremiumPopup from '@/components/PremiumPopup';
 import AdminAdsDisplay from '@/components/AdminAdsDisplay';
 import {
@@ -22,25 +23,62 @@ import {
   Wallet,
   Bell,
   User,
-  Calendar,
-  TrendingUp,
-  ExternalLink,
-  Store,
   Plus,
-  Eye,
-  Star,
-  Target,
-  X,
   Megaphone,
   Send,
   Upload,
-  DollarSign,
-  Crown
+  Crown,
+  Sparkles,
+  TrendingUp,
+  Tag,
+  Calendar,
+  ShoppingBag,
+  Store,
+  MoreVertical,
+  Ticket,
+  Loader2
 } from 'lucide-react';
+
+// A simple, self-contained wheel component
+const SpinToWinWheel = ({ onSpin, disabled, result, isSpinning }: { onSpin: () => void; disabled: boolean; result: string | null; isSpinning: boolean; }) => {
+  return (
+    <div className="flex flex-col items-center justify-center space-y-4">
+        <div className="relative w-64 h-64 flex items-center justify-center">
+            <div className={`absolute w-full h-full bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full transition-transform duration-1000 ${isSpinning ? 'animate-spin' : ''}`}>
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-2 w-0 h-0 border-l-8 border-l-transparent border-r-8 border-r-transparent border-b-8 border-b-white"></div>
+                {[...Array(8)].map((_, i) => (
+                    <div key={i} className="absolute w-full h-full" style={{ transform: `rotate(${i * 45}deg)` }}>
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-px h-1/2 bg-white/20"></div>
+                        <span className="absolute top-4 left-1/2 -translate-x-1/2 text-white text-xs transform rotate-90">{i % 2 === 0 ? 'Win!' : 'Try'}</span>
+                    </div>
+                ))}
+            </div>
+             <div className="absolute w-48 h-48 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-center p-4">
+                {result ? (
+                    <div className="text-white">
+                        <p className="font-bold text-lg">{result.includes('Points') ? 'You Won!' : 'Better Luck Next Time!'}</p>
+                        <p className="text-sm">{result}</p>
+                    </div>
+                ) : (
+                   isSpinning ? <p className="text-white font-bold text-xl">Spinning...</p> : <Ticket className="w-16 h-16 text-white/50" />
+                )}
+            </div>
+        </div>
+        <Button 
+          onClick={onSpin} 
+          className="mt-6 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 shadow-lg transition-all transform hover:scale-105" 
+          disabled={disabled || isSpinning}
+        >
+          {isSpinning ? 'Spinning...' : (disabled ? 'Come Back Tomorrow' : 'Spin to Win')}
+        </Button>
+    </div>
+  );
+};
 
 export default function PartnerHome() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [isSubmittingAd, setIsSubmittingAd] = useState(false);
   const [userData, setUserData] = useState({
     name: '',
     email: '',
@@ -48,517 +86,340 @@ export default function PartnerHome() {
     points: 0,
     profilePicture: '/placeholder.svg'
   });
+  const [myCoupons, setMyCoupons] = useState<any[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [spinAllowed, setSpinAllowed] = useState(false);
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
 
-  const rewardPoints = userData.points;
-  const weeklyScans = 12;
-  const adViews = 340;
-  const lastScan = {
-    binId: 'BIN-005',
-    timestamp: '2024-01-15 16:45',
-    location: 'Downtown Mall, Level 1'
+  const segments = [
+    { option: '5 Points', points: 5 }, { option: 'Try Again', points: 0 },
+    { option: '10 Points', points: 10 }, { option: 'Try Again', points: 0 },
+    { option: '20 Points', points: 20 }, { option: 'Try Again', points: 0 },
+    { option: '50 Points', points: 50 }, { option: 'Try Again', points: 0 },
+  ];
+
+  const handleSpin = async () => {
+    // ... (function is unchanged) ...
+    if (!spinAllowed || isSpinning || !userId) return;
+    setIsSpinning(true);
+    setResult(null);
+
+    setTimeout(async () => {
+      const prizeIndex = Math.floor(Math.random() * segments.length);
+      const prize = segments[prizeIndex];
+      
+      setResult(prize.option);
+      setIsSpinning(false);
+      setSpinAllowed(false);
+      
+      await supabase.from('user_points').upsert({ user_id: userId, last_spin_at: new Date().toISOString() }, { onConflict: 'user_id' });
+
+      if (prize.points > 0) {
+        const { error } = await supabase.rpc('increment_user_points', { user_id_input: userId, points_to_add: prize.points });
+        if (!error) {
+            setUserData(prev => ({ ...prev, points: prev.points + prize.points }));
+        } else {
+          console.error("Failed to add points:", error);
+        }
+      }
+    }, 3000);
   };
 
-  const scanHistory = [
-    
-  ];
-
-  const ads = [
-    
-  ];
-
   const quickActions = [
-    { icon: QrCode, label: 'QR Scanner', href: '/partner/scanner', color: 'bg-green-500' },
-    { icon: MapPin, label: 'Map & Shop', href: '/partner/map', color: 'bg-blue-500' },
-    { icon: Gift, label: 'Coupon Store', href: '/partner/coupons', color: 'bg-purple-500' },
-    { icon: Crown, label: 'Purchase Premium', href: '/partner/purchase-premium', color: 'bg-gradient-to-r from-yellow-500 to-orange-500' },
-    { icon: Plus, label: 'Add Coupon', href: '/partner/add-coupon', color: 'bg-orange-500' },
-    { icon: Play, label: 'Watch Ads', href: '/partner/ads', color: 'bg-red-500' },
-    { icon: Users, label: 'Refer Friends', href: '/partner/refer', color: 'bg-pink-500' },
-    { icon: Wallet, label: 'My Wallet', href: '/partner/wallet', color: 'bg-indigo-500' },
-    { icon: Bell, label: 'Notifications', href: '/partner/notifications', color: 'bg-yellow-500' },
-    { icon: User, label: 'Profile', href: '/partner/profile', color: 'bg-gray-500' }
+    { icon: QrCode, label: 'QR Scanner', href: '/partner/scanner', color: 'from-purple-500 to-indigo-500' },
+    { icon: MapPin, label: 'Map & Shop', href: '/partner/map', color: 'from-blue-500 to-cyan-500' },
+    { icon: Gift, label: 'Coupon Store', href: '/partner/coupons', color: 'from-pink-500 to-purple-500' },
+    { icon: Crown, label: 'Purchase Premium', href: '/partner/purchase-premium', color: 'from-yellow-500 to-orange-500' },
+    { icon: Plus, label: 'Add Coupon', href: '/partner/add-coupon', color: 'from-orange-500 to-red-500' },
+    { icon: Play, label: 'Watch Ads', href: '/partner/ads', color: 'from-red-500 to-pink-500' },
+    { icon: Users, label: 'Refer Friends', href: '/partner/refer', color: 'from-teal-500 to-green-500' },
+    { icon: Wallet, label: 'My Wallet', href: '/partner/wallet', color: 'from-indigo-500 to-purple-500' },
+    { icon: Bell, label: 'Notifications', href: '/partner/notifications', color: 'from-amber-500 to-yellow-500' },
+    { icon: User, label: 'Profile', href: '/partner/profile', color: 'from-gray-600 to-gray-800' }
   ];
 
   const [showSponsorDialog, setShowSponsorDialog] = useState(false);
   const [sponsorFormData, setSponsorFormData] = useState({
-    adTitle: '',
-    adDescription: '',
-    budget: '',
-    duration: '',
-    targetAudience: '',
-    businessCategory: '',
-    additionalNotes: ''
+    adTitle: '', adDescription: '', selectedRate: '', duration: '',
+    targetAudience: '', businessCategory: '',
+    adMedia: null as File | null, additionalNotes: ''
   });
 
-  const handleSponsorFormChange = (field: string, value: string) => {
-    try {
-      setSponsorFormData(prev => ({
-        ...prev,
-        [field]: value
-      }));
-    } catch (error) {
-      console.error('Form update error:', error);
-    }
+  const adPricingOptions = [
+    { value: '1', label: '30 sec, 5 plays/day - ₹50/day', rate: 50 },
+    { value: '2', label: '60 sec, 5 plays/day - ₹90/day', rate: 90 },
+    { value: '3', label: '30 sec, 10 plays/day - ₹90/day', rate: 90 },
+    { value: '4', label: '60 sec, 10 plays/day - ₹170/day', rate: 170 },
+    { value: '5', label: '30 sec, 15 plays/day - ₹125/day', rate: 125 },
+    { value: '6', label: '60 sec, 15 plays/day - ₹250/day', rate: 250 },
+    { value: '7', label: '30 sec, 25 plays/day - ₹200/day', rate: 200 },
+    { value: '8', label: '60 sec, 25 plays/day - ₹350/day', rate: 350 },
+    { value: '9', label: '30 sec, 30 plays/day - ₹240/day', rate: 240 },
+    { value: '10', label: '60 sec, 30 plays/day - ₹480/day', rate: 480 },
+  ];
+
+  const handleSponsorFormChange = (field: string, value: string | File | null) => {
+    setSponsorFormData(prev => ({...prev, [field]: value}));
   };
 
-  const handleSponsorSubmit = () => {
-    try {
-      if (!sponsorFormData.adTitle || !sponsorFormData.adDescription) {
-        alert('Please fill in the required fields (Title and Description)');
+  // --- THIS IS THE MODIFIED FUNCTION ---
+  const handleSponsorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sponsorFormData.adMedia) {
+        alert("Please upload an ad media file.");
         return;
-      }
+    }
+    
+    const selectedPackage = adPricingOptions.find(p => p.value === sponsorFormData.selectedRate);
+    if (!selectedPackage) {
+        alert("Please select a valid ad plan.");
+        return;
+    }
 
-      console.log('Sponsor ad request submitted:', sponsorFormData);
-      alert('🎯 Your sponsor ad request has been submitted to admin for review! You will receive a notification once it\'s approved.');
-      setShowSponsorDialog(false);
-      setSponsorFormData({
-        adTitle: '',
-        adDescription: '',
-        budget: '',
-        duration: '',
-        targetAudience: '',
-        businessCategory: '',
-        additionalNotes: ''
-      });
-    } catch (error) {
-      console.error('Submit error:', error);
-      alert('Error submitting request. Please try again.');
+    setIsSubmittingAd(true);
+
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("User not found");
+
+        const durationInDays = parseInt(sponsorFormData.duration);
+        const totalBudget = selectedPackage.rate * durationInDays;
+
+        const file = sponsorFormData.adMedia;
+        const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        // Use the folder name 'sponsored-ads' as in your original code
+        const filePath = `sponsored-ads/${user.id}/${Date.now()}-${sanitizedFileName}`; 
+        
+        // --- FIXED: Use 'sponsored_ads' bucket (lowercase) ---
+        const { error: uploadError } = await supabase.storage
+          .from('sponsored_ads') 
+          .upload(filePath, file);
+          
+        if (uploadError) throw uploadError;
+
+        // --- FIXED: Use 'sponsored_ads' bucket (lowercase) ---
+        const { data: urlData } = supabase.storage
+          .from('sponsored_ads')
+          .getPublicUrl(filePath);
+        
+        const finalNotes = `Selected Plan: ${selectedPackage.label}\nDuration: ${durationInDays} days\nCalculated Budget: ₹${totalBudget}\n\n--- Partner Notes ---\n${sponsorFormData.additionalNotes}`;
+
+        // --- FIXED: Changed from .rpc() to .from().insert() ---
+        // This now matches your table schema exactly
+        const { error: insertError } = await supabase
+          .from('sponsored_ad_requests') // Your table name
+          .insert({
+            id: user.id, // This is the user's ID, matching your schema
+            ad_title: sponsorFormData.adTitle,
+            ad_description: sponsorFormData.adDescription,
+            budget: totalBudget,
+            duration_days: durationInDays,
+            target_audience: sponsorFormData.targetAudience,
+            business_category: sponsorFormData.businessCategory,
+            ad_media_url: urlData.publicUrl,
+            additional_notes: finalNotes,
+            status: 'pending' // Default status
+          });
+
+        if (insertError) throw insertError;
+        // --- END OF FIX ---
+
+        alert('Sponsorship request submitted successfully!');
+        setSponsorFormData({
+            adTitle: '', adDescription: '', selectedRate: '', duration: '',
+            targetAudience: '', businessCategory: '', adMedia: null, additionalNotes: ''
+        });
+        setShowSponsorDialog(false);
+
+    } catch (error: any) {
+        console.error("Error submitting ad request:", error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        setIsSubmittingAd(false);
     }
   };
+  
+  const fetchMyCoupons = async (currentUserId: string) => {
+    // This function remains for future use, you will connect this later
+  };
 
-  // Load user data when component mounts
   useEffect(() => {
     async function loadUserData() {
+      setLoading(true);
       try {
-        setLoading(true);
-        
-        // Get current user
         const { data: { user } } = await supabase.auth.getUser();
-        
         if (!user) {
           navigate('/login', { replace: true });
           return;
         }
-        
-        // Get user profile from profiles table
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
 
-        if (error) {
-          console.error('Error loading partner profile:', error);
-          // Set basic user data from auth if profile fetch fails
-          setUserData({
-            name: user.user_metadata?.name || user.email?.split('@')[0] || 'Partner',
-            email: user.email || '',
-            level: 'Partner',
-            points: 0,
-            profilePicture: user.user_metadata?.avatar_url || '/placeholder.svg'
-          });
+        setUserId(user.id);
+
+        const [profileRes, pointsRes] = await Promise.all([
+            supabase.from('profiles').select('full_name, avatar_url').eq('id', user.id).single(),
+            supabase.from('user_points').select('points, last_spin_at').eq('user_id', user.id).single()
+        ]);
+        
+        const { data: profile } = profileRes;
+        const { data: pointsRow } = pointsRes;
+        
+        setUserData(prev => ({
+          ...prev,
+          name: profile?.full_name || user.email?.split('@')[0] || 'Partner',
+          email: user.email || '',
+          profilePicture: profile?.avatar_url || '/placeholder.svg',
+          points: pointsRow?.points || 0
+        }));
+
+        if (pointsRow?.last_spin_at) {
+            const last = new Date(pointsRow.last_spin_at);
+            const now = new Date();
+            const diffHours = (now.getTime() - last.getTime()) / (1000 * 60 * 60);
+            setSpinAllowed(diffHours >= 24);
         } else {
-          // Set user data from profile
-          setUserData({
-            name: profile.name || profile.full_name || user.email?.split('@')[0] || 'Partner',
-            email: user.email || '',
-            level: profile.user_type || 'Partner',
-            points: profile.points || 0,
-            profilePicture: profile.avatar_url || user.user_metadata?.avatar_url || '/placeholder.svg'
-          });
+            setSpinAllowed(true);
         }
       } catch (error) {
         console.error('Error in loadUserData:', error);
-        navigate('/login', { replace: true });
       } finally {
         setLoading(false);
       }
     }
-
     loadUserData();
   }, [navigate]);
+  
+  const isSponsorFormValid = sponsorFormData.adTitle && 
+                            sponsorFormData.selectedRate && 
+                            sponsorFormData.duration && 
+                            sponsorFormData.adMedia;
 
-  // Show loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading Partner Dashboard...</p>
-        </div>
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-indigo-50 to-blue-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-purple-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-indigo-50 to-blue-50 pb-20">
       <PremiumPopup userType="partner" />
-      {/* Header */}
-      <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-6 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <Link to="/partner/profile" className="relative group">
-              <Avatar className="w-12 h-12 border-2 border-white hover:border-green-200 transition-colors cursor-pointer">
-                <AvatarImage src={userData.profilePicture} alt="Profile" />
-                <AvatarFallback>MP</AvatarFallback>
-              </Avatar>
-              <div className="absolute inset-0 bg-black/20 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <User className="w-5 h-5 text-white" />
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-20 -right-20 w-64 h-64 bg-purple-200/30 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-32 -left-20 w-80 h-80 bg-indigo-200/30 rounded-full blur-3xl"></div>
+      </div>
+
+      <div className="relative bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white shadow-xl">
+         <div className="absolute inset-0 bg-black/10"></div>
+        <div className="relative p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4">
+              <Link to="/partner/profile"><Avatar className="w-14 h-14"><AvatarImage src={userData.profilePicture} /><AvatarFallback>{userData.name.charAt(0)}</AvatarFallback></Avatar></Link>
+              <div>
+                <h1 className="text-2xl font-bold">{userData.name}</h1>
+                <Badge className="mt-1"><Sparkles className="w-3 h-3 mr-1" />{userData.level}</Badge>
               </div>
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold">{userData.name}</h1>
-              <p className="text-green-100 text-sm">{userData.level} • Green Electronics Store</p>
             </div>
-          </div>
-          <div className="text-right">
-            <div className="flex items-center gap-2 mb-1">
-              <Coins className="w-5 h-5 text-yellow-300" />
-              <span className="text-2xl font-bold">{rewardPoints.toLocaleString()}</span>
+            <div className="text-right">
+              <div className="bg-white/20 p-3 rounded-xl">
+                <div className="flex items-center gap-2"><Coins className="w-6 h-6 text-yellow-300" /><span className="text-3xl font-bold">{userData.points.toLocaleString()}</span></div>
+                <p className="text-purple-100 text-sm">Reward Points</p>
+              </div>
             </div>
-            <p className="text-green-100 text-sm">Reward Points</p>
           </div>
         </div>
       </div>
 
-      {/* Admin-Controlled Ad Section */}
       <AdminAdsDisplay userType="partners" placement="home_top" />
 
-      <div className="p-4 space-y-6">
-        {/* Stats Overview */}
-        <div className="grid grid-cols-3 gap-4">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardContent className="p-4 text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <Calendar className="w-5 h-5 text-blue-600" />
-                <span className="text-2xl font-bold text-blue-800">{weeklyScans}</span>
-              </div>
-              <p className="text-sm text-blue-600">Weekly Scans</p>
-            </CardContent>
-          </Card>
-          
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
-            <CardContent className="p-4 text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <Eye className="w-5 h-5 text-purple-600" />
-                <span className="text-2xl font-bold text-purple-800">{adViews}</span>
-              </div>
-              <p className="text-sm text-purple-600">Ad Views</p>
-            </CardContent>
-          </Card>
-          
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-200">
-            <CardContent className="p-4 text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <Star className="w-5 h-5 text-yellow-600" />
-                <span className="text-2xl font-bold text-yellow-800">4.8</span>
-              </div>
-              <p className="text-sm text-yellow-600">Shop Rating</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Sponsor Your Ad Feature */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-300 border-l-4 border-l-purple-500">
+      <div className="relative p-4 space-y-6">
+        <Card className="border-0 shadow-xl">
+          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp/>Wheel of Luck</CardTitle></CardHeader>
+          <CardContent className="flex flex-col items-center">
+             <SpinToWinWheel onSpin={handleSpin} disabled={!spinAllowed} result={result} isSpinning={isSpinning} />
+          </CardContent>
+        </Card>
+        
+        <Card className="border-0 shadow-xl">
           <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
-                  <Megaphone className="w-6 h-6 text-white" />
-                </div>
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-4"><div className="w-14 h-14 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center"><Megaphone className="w-7 h-7 text-white" /></div>
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Sponsor Your Ad</h3>
-                  <p className="text-sm text-gray-600">Get your business displayed on smart trash bins across the city</p>
+                  <h3 className="text-xl font-bold">Sponsor Your Ad</h3>
+                  <p className="text-sm text-gray-600">Spend money to display your ad.</p>
                 </div>
               </div>
               <Dialog open={showSponsorDialog} onOpenChange={setShowSponsorDialog}>
-                <DialogTrigger asChild>
-                  <Button className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700">
-                    <Send className="w-4 h-4 mr-2" />
-                    Request Sponsorship
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <Megaphone className="w-5 h-5 text-purple-600" />
-                      Sponsor Ad Request
-                    </DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div>
-                      <Label htmlFor="adTitle">Ad Title *</Label>
-                      <Input
-                        id="adTitle"
-                        placeholder="Enter your ad title"
-                        value={sponsorFormData.adTitle}
-                        onChange={(e) => handleSponsorFormChange('adTitle', e.target.value)}
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="adDescription">Ad Description *</Label>
-                      <Textarea
-                        id="adDescription"
-                        placeholder="Describe your ad content and message"
-                        value={sponsorFormData.adDescription}
-                        onChange={(e) => handleSponsorFormChange('adDescription', e.target.value)}
-                        rows={3}
-                      />
-                    </div>
-
+                <DialogTrigger asChild><Button><Send className="w-4 h-4 mr-2" />Request Sponsorship</Button></DialogTrigger>
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                  <DialogHeader><DialogTitle>Sponsor Ad Request</DialogTitle><DialogDescription>Submit your ad for review.</DialogDescription></DialogHeader>
+                  <form onSubmit={handleSponsorSubmit} className="space-y-4 py-4">
+                    <div><Label>Ad Title *</Label><Input value={sponsorFormData.adTitle} onChange={(e) => handleSponsorFormChange('adTitle', e.target.value)} required /></div>
+                    <div><Label>Ad Description *</Label><Textarea value={sponsorFormData.adDescription} onChange={(e) => handleSponsorFormChange('adDescription', e.target.value)} required /></div>
+                    <div><Label>Upload Media *</Label><div className="mt-1 flex justify-center p-6 border-2 border-dashed rounded-md"><div className="text-center"><Upload className="mx-auto h-12 w-12 text-gray-400" /><label htmlFor="adMedia-upload" className="cursor-pointer font-medium text-purple-600"><span>Upload a file</span><input id="adMedia-upload" type="file" className="sr-only" onChange={(e) => handleSponsorFormChange('adMedia', e.target.files ? e.target.files[0] : null)} accept="image/*,video/*" required /></label>{sponsorFormData.adMedia ? <p className="text-xs text-green-600">Selected: {sponsorFormData.adMedia.name}</p> : <p className="text-xs text-gray-500">Up to 10MB</p>}</div></div></div>
+                    
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <Label htmlFor="budget">Budget (₹)</Label>
-                        <Input
-                          id="budget"
-                          type="number"
-                          placeholder="5000"
-                          value={sponsorFormData.budget}
-                          onChange={(e) => handleSponsorFormChange('budget', e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="duration">Duration</Label>
-                        <Select onValueChange={(value) => handleSponsorFormChange('duration', value)}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select duration" />
-                          </SelectTrigger>
+                        <Label>Ad Plan *</Label>
+                        <Select value={sponsorFormData.selectedRate} onValueChange={(v) => handleSponsorFormChange('selectedRate', v)} required>
+                          <SelectTrigger><SelectValue placeholder="Select a plan..." /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="1-week">1 Week</SelectItem>
-                            <SelectItem value="2-weeks">2 Weeks</SelectItem>
-                            <SelectItem value="1-month">1 Month</SelectItem>
-                            <SelectItem value="3-months">3 Months</SelectItem>
-                            <SelectItem value="6-months">6 Months</SelectItem>
+                            {adPricingOptions.map((plan) => (
+                              <SelectItem key={plan.value} value={plan.value}>
+                                {plan.label}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
+                      <div>
+                        <Label>Campaign Duration (days) *</Label>
+                        <Input type="number" value={sponsorFormData.duration} onChange={(e) => handleSponsorFormChange('duration', e.target.value)} placeholder="e.g., 7" min="1" required />
+                      </div>
                     </div>
-
+                    
+                    <div><Label>Target Audience</Label><Input value={sponsorFormData.targetAudience} onChange={(e) => handleSponsorFormChange('targetAudience', e.target.value)} /></div>
+                    
                     <div>
-                      <Label htmlFor="businessCategory">Business Category</Label>
-                      <Select onValueChange={(value) => handleSponsorFormChange('businessCategory', value)}>
+                      <Label>Business Category</Label>
+                      <Select value={sponsorFormData.businessCategory} onValueChange={(v) => handleSponsorFormChange('businessCategory', v)}>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select category" />
+                          <SelectValue placeholder="Select a category..." />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="electronics">Electronics</SelectItem>
-                          <SelectItem value="food-beverage">Food & Beverage</SelectItem>
-                          <SelectItem value="fashion">Fashion & Clothing</SelectItem>
-                          <SelectItem value="health-beauty">Health & Beauty</SelectItem>
-                          <SelectItem value="home-garden">Home & Garden</SelectItem>
+                          <SelectItem value="food">Food</SelectItem>
+                          <SelectItem value="retail">Retail</SelectItem>
                           <SelectItem value="services">Services</SelectItem>
-                          <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
-                    <div>
-                      <Label htmlFor="targetAudience">Target Audience</Label>
-                      <Input
-                        id="targetAudience"
-                        placeholder="e.g., Young professionals, Families, Students"
-                        value={sponsorFormData.targetAudience}
-                        onChange={(e) => handleSponsorFormChange('targetAudience', e.target.value)}
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="additionalNotes">Additional Notes</Label>
-                      <Textarea
-                        id="additionalNotes"
-                        placeholder="Any special requirements or additional information"
-                        value={sponsorFormData.additionalNotes}
-                        onChange={(e) => handleSponsorFormChange('additionalNotes', e.target.value)}
-                        rows={2}
-                      />
-                    </div>
-
-                    <div className="bg-blue-50 p-3 rounded-lg">
-                      <div className="flex items-start gap-2">
-                        <DollarSign className="w-4 h-4 text-blue-600 mt-0.5" />
-                        <div className="text-xs text-blue-800">
-                          <p className="font-medium">Pricing Information:</p>
-                          <p>• Standard bins: ₹500/week per bin</p>
-                          <p>• Premium locations: ₹800/week per bin</p>
-                          <p>• Bulk discounts available for 10+ bins</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-4">
-                      <Button onClick={handleSponsorSubmit} className="flex-1 bg-purple-600 hover:bg-purple-700">
-                        <Send className="w-4 h-4 mr-2" />
-                        Submit Request
+                    <div><Label>Additional Notes</Label><Textarea value={sponsorFormData.additionalNotes} onChange={(e) => handleSponsorFormChange('additionalNotes', e.target.value)} /></div>
+                    <DialogFooter>
+                      <Button type="submit" className="w-full" disabled={!isSponsorFormValid || isSubmittingAd}>
+                        {isSubmittingAd ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        {isSubmittingAd ? 'Submitting...' : 'Submit Request'}
                       </Button>
-                      <Button variant="outline" onClick={() => setShowSponsorDialog(false)}>
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
+                    </DialogFooter>
+                  </form>
                 </DialogContent>
               </Dialog>
             </div>
-            <div className="mt-4 flex items-center gap-4 text-sm text-gray-600">
-              <div className="flex items-center gap-1">
-                <Eye className="w-4 h-4" />
-                <span>High visibility locations</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Target className="w-4 h-4" />
-                <span>Targeted audience reach</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <TrendingUp className="w-4 h-4" />
-                <span>Boost your business</span>
-              </div>
-            </div>
           </CardContent>
         </Card>
 
-        {/* Last Scan Info */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <QrCode className="w-5 h-5 text-green-600" />
-              Recent Activity
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-              <div>
-                <p className="font-medium text-green-800">Last Scanned Bin</p>
-                <p className="text-sm text-green-600">{lastScan.binId}</p>
-                <p className="text-xs text-gray-500">{lastScan.timestamp}</p>
-              </div>
-              <Badge variant="secondary" className="bg-green-100 text-green-800">
-                +15 Points
-              </Badge>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-3 bg-blue-50 rounded-lg">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <TrendingUp className="w-4 h-4 text-blue-600" />
-                  <span className="text-xl font-bold text-blue-800">185</span>
-                </div>
-                <p className="text-sm text-blue-600">Total Scans</p>
-              </div>
-              <div className="text-center p-3 bg-purple-50 rounded-lg">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <Store className="w-4 h-4 text-purple-600" />
-                  <span className="text-xl font-bold text-purple-800">8</span>
-                </div>
-                <p className="text-sm text-purple-600">Active Coupons</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Scan History */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Scan History</CardTitle>
-          </CardHeader>
+        <Card className="border-0 shadow-xl">
+          <CardHeader><div className="flex items-center justify-between"><CardTitle className="flex items-center gap-2"><Tag/>My Coupons</CardTitle><Link to="/partner/add-coupon"><Button size="sm"><Plus className="w-4 h-4 mr-1"/>Add</Button></Link></div></CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {scanHistory.map((scan, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <QrCode className="w-5 h-5 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium">{scan.id}</p>
-                      <p className="text-sm text-gray-500">{scan.date} at {scan.time}</p>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="text-green-600 border-green-200">
-                    +{scan.points}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-            <Button
-              variant="outline"
-              className="w-full mt-4"
-              onClick={() => navigate('/partner/scan-history')}
-            >
-              View All History
-            </Button>
+            {myCoupons.length === 0 ? <div className="text-center py-8"><ShoppingBag className="mx-auto w-10 h-10 text-gray-400"/><p>No coupons yet.</p></div> : myCoupons.map(c => <div key={c.id}>...</div>)}
           </CardContent>
         </Card>
 
-        {/* Admin Ads Section - Scrollable Carousel */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-200">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Target className="w-5 h-5 text-red-600" />
-              Partner Opportunities
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {ads.map((ad) => (
-                <Link key={ad.id} to={ad.link}>
-                  <div className="border rounded-lg p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-300 hover:border-primary/20">
-                    <div className="flex items-center gap-3">
-                      {ad.type === 'image' || ad.type === 'video' ? (
-                        <div className="relative">
-                          <img 
-                            src={ad.image} 
-                            alt={ad.title}
-                            className="w-16 h-16 rounded-lg object-cover"
-                          />
-                          {ad.type === 'video' && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
-                              <Play className="w-6 h-6 text-white" fill="white" />
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="w-16 h-16 bg-gradient-to-br from-green-400 to-green-600 rounded-lg flex items-center justify-center">
-                          <ExternalLink className="w-8 h-8 text-white" />
-                        </div>
-                      )}
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-medium">{ad.title}</h3>
-                          <Badge variant={ad.priority === 'high' ? 'destructive' : ad.priority === 'medium' ? 'default' : 'secondary'} className="text-xs">
-                            {ad.priority}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-gray-500">{ad.description}</p>
-                      </div>
-                      <ExternalLink className="w-5 h-5 text-gray-400" />
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* All Features Access */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-300">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Partner Features</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4">
-              {quickActions.map((action, index) => (
-                <Link key={index} to={action.href}>
-                  <div className="flex flex-col items-center p-3 border rounded-lg hover:shadow-lg hover:scale-105 transition-all duration-300 hover:border-primary/20">
-                    <div className={`w-10 h-10 ${action.color} rounded-full flex items-center justify-center mb-2 transition-transform hover:scale-110 ${action.label === 'Purchase Premium' ? 'shadow-lg' : ''}`}>
-                      <action.icon className="w-5 h-5 text-white" />
-                    </div>
-                    <span className={`text-xs font-medium text-center line-clamp-2 ${action.label === 'Purchase Premium' ? 'text-yellow-600 font-bold' : ''}`}>
-                      {action.label}
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </div>
+        <Card className="border-0 shadow-xl">
+          <CardHeader><CardTitle>Partner Features</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {quickActions.map((action, i) => <Link key={i} to={action.href} className="group flex flex-col items-center p-4 border rounded-lg hover:shadow-lg"><div className={`w-14 h-14 bg-gradient-to-br ${action.color} rounded-2xl flex items-center justify-center mb-2`}><action.icon className="w-7 h-7 text-white" /></div><span>{action.label}</span></Link>)}
           </CardContent>
         </Card>
       </div>

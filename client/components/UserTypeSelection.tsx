@@ -1,140 +1,141 @@
 import React, { useState, useEffect } from 'react';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Recycle } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { createUserProfile, getUserProfile } from '@/lib/profileService';
 
-interface UserTypeSelectionProps {
-  userId: string;
-  onComplete?: () => void;
-}
-
-export default function UserTypeSelection({ userId, onComplete }: UserTypeSelectionProps) {
+export default function UserTypeSelection({ userId: _unusedProp }: { userId?: string }) {
   const navigate = useNavigate();
-  const [userType, setUserType] = useState('');
+  const [pending, setPending] = useState<{ name: string; email: string; phone: string; password: string } | null>(null);
+  const [userType, setUserType] = useState<'consumer' | 'provider' | 'admin' | string>('consumer');
   const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const userTypes = [
-    { value: '0', label: 'Consumer', description: 'Scan bins and earn rewards' },
-    { value: '1', label: 'Partner', description: 'Local business partner' },
-    { value: '2', label: 'Collector', description: 'Trash collection service' }
-  ];
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('pending_signup');
+      if (!raw) {
+        // nothing pending — go back to signup
+        navigate('/signup'); // or setShowUserTypeSelection(false) depending on your routing
+        return;
+      }
+      setPending(JSON.parse(raw));
+    } catch (err) {
+      console.error('Failed to read pending signup', err);
+      navigate('/signup');
+    }
+  }, [navigate]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleConfirm = async () => {
+    if (!pending) return;
     setLoading(true);
+    setMessage(null);
 
     try {
-      if (!userType) {
-        alert('Please select a user type');
+      // Call supabase.auth.signUp AFTER user_type is selected
+      const { data, error } = await supabase.auth.signUp({
+        email: pending.email,
+        password: pending.password,
+        options: {
+          data: {
+            full_name: pending.name,
+            phone_number: pending.phone,
+            user_type: userType
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      // Supabase v2 returns data.user (the created user) and data.session (maybe null)
+      const newUser = data?.user;
+      if (!newUser || !newUser.id) {
+        // rare: if user object not returned, show a message and stop.
+        setMessage('Signup succeeded but user info not returned. Please check your email to confirm and then login.');
+        // cleanup
+        sessionStorage.removeItem('pending_signup');
         setLoading(false);
+        navigate('/login');
         return;
       }
 
-      // Update the user metadata with the selected user type
-      const { data: userData, error } = await supabase.auth.updateUser({
-        data: { user_type: userType }
-      });
+      // Insert profile row in profiles table (use upsert to avoid conflicts)
+      const profile = {
+        id: newUser.id,
+        full_name: pending.name,
+        phone_number: pending.phone,
+        email: pending.email,
+        user_type: userType
+      };
 
-      if (error) {
-        throw error;
-      }
-      
-      // Check if user already has a profile
-      const { success, profile } = await getUserProfile(userId);
-      
-      // If no profile exists, create one
-      if (!success || !profile) {
-        // Get user's current metadata
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (user) {
-          const profileData = {
-            name: user.user_metadata?.name || '',
-            phone: user.user_metadata?.phone || '',
-            user_type: userType
-          };
-          
-          await createUserProfile(userId, profileData);
-        }
+      const { data: pData, error: pErr } = await supabase
+        .from('profiles')
+        .upsert(profile, { onConflict: 'id' });
+
+      if (pErr) {
+        // If this fails due to RLS or constraints, surface error
+        console.error('profile insert error', pErr);
+        // you can still allow signup to continue; consider cleaning up user if critical
+        setMessage('Signed up but failed to create profile: ' + pErr.message);
+      } else {
+        setMessage('Signup successful! A confirmation email has been sent. Please verify your email.');
       }
 
-      // Navigate to the appropriate dashboard based on user type
-      switch (userType) {
-        case '0': // Consumer
-          navigate('/consumer/home');
-          break;
-        case '1': // Partner
-          navigate('/partner/home');
-          break;
-        case '2': // Collector
-          navigate('/collector/home');
-          break;
-        default:
-          navigate('/consumer/home');
-      }
+      // cleanup pending data
+      sessionStorage.removeItem('pending_signup');
 
-      if (onComplete) {
-        onComplete();
-      }
-    } catch (error) {
-      console.error('Error updating user type:', error);
-      alert('Failed to update user type. Please try again.');
-    } finally {
+      // optionally redirect to login or to a "check your email" screen
+      setLoading(false);
+      navigate('/login');
+    } catch (err: any) {
+      console.error('Signup/confirm error', err);
+      setMessage('Signup failed: ' + (err.message || String(err)));
       setLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-white flex items-center justify-center p-4">
-      <Card className="w-full max-w-md mx-auto shadow-xl border-0">
-        <CardHeader className="text-center space-y-4">
-          <div className="flex justify-center">
-            <div className="bg-primary p-3 rounded-full">
-              <Recycle className="w-8 h-8 text-white" />
-            </div>
-          </div>
-          <div>
-            <CardTitle className="text-2xl font-bold text-green-800">Welcome to Trashee</CardTitle>
-            <CardDescription className="text-gray-600">
-              Please select your account type to continue
-            </CardDescription>
-          </div>
-        </CardHeader>
-        
-        <CardContent className="space-y-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="userType">Account Type</Label>
-              <Select value={userType} onValueChange={setUserType} required>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select your account type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {userTypes.map((type) => (
-                    <SelectItem key={type.value} value={type.value}>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{type.label}</span>
-                        <span className="text-xs text-gray-500">{type.description}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+  if (!pending) return null;
 
-            <Button 
-              type="submit" 
-              className="w-full bg-primary hover:bg-primary/90" 
-              disabled={loading}
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center p-4">
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+          <CardTitle>Select your user type</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-4">Hello <strong>{pending.name}</strong>, choose which account type describes you.</p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <button
+              onClick={() => setUserType('consumer')}
+              className={`p-4 rounded border ${userType === 'consumer' ? 'border-emerald-600 bg-emerald-50' : ''}`}
             >
-              {loading ? 'Processing...' : 'Continue'}
+              Consumer
+            </button>
+            <button
+              onClick={() => setUserType('provider')}
+              className={`p-4 rounded border ${userType === 'provider' ? 'border-emerald-600 bg-emerald-50' : ''}`}
+            >
+              Provider
+            </button>
+            <button
+              onClick={() => setUserType('admin')}
+              className={`p-4 rounded border ${userType === 'admin' ? 'border-emerald-600 bg-emerald-50' : ''}`}
+            >
+              Admin
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={handleConfirm} disabled={loading}>
+              {loading ? 'Creating account...' : 'Confirm & Create Account'}
             </Button>
-          </form>
+            <Button variant="ghost" onClick={() => { navigate('/signup'); }}>
+              Back
+            </Button>
+          </div>
+
+          {message && <div className="mt-4 text-sm">{message}</div>}
         </CardContent>
       </Card>
     </div>

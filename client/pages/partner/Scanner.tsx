@@ -2,346 +2,293 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Camera, QrCode, MapPin, Clock, Coins, CheckCircle, X, Gift, Trash2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { ArrowLeft, Camera, CheckCircle, X, Loader2, History, Gift } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/lib/supabase';
+import { QrReader } from 'react-qr-reader';
+
+// Types
+interface ScanHistory {
+  id: string;
+  trashbin_id: string;
+  scanned_at: string;
+  points_awarded: number;
+}
+interface ScannedCouponDetails {
+  owned_coupon_id: string;
+  product_name: string;
+  product_image: string;
+  shop_name: string;
+  discounted_price: number;
+  expiry_date: string;
+}
 
 export default function PartnerScanner() {
   const navigate = useNavigate();
-  const [isScanning, setIsScanning] = useState(false);
-  const [lastScan, setLastScan] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState('validate-coupon');
+
+  // State for Bin Scanning
+  const [isBinScanning, setIsBinScanning] = useState(false);
+  const [lastBinScan, setLastBinScan] = useState<any>(null);
   const [cooldownTime, setCooldownTime] = useState(0);
-  const [activeTab, setActiveTab] = useState<'bins' | 'coupons'>('bins');
-  const [scanHistory, setScanHistory] = useState([
-    
-  ]);
+  const [binScanHistory, setBinScanHistory] = useState<ScanHistory[]>([]);
+  const [noBinQrMessage, setNoBinQrMessage] = useState(false);
+
+  // State for Coupon Validation flow
+  const [isCouponScanning, setIsCouponScanning] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [manualToken, setManualToken] = useState('');
+  const [scanResult, setScanResult] = useState<{ type: 'success' | 'error'; message: string; } | null>(null);
+  const [showRedeemModal, setShowRedeemModal] = useState(false);
+  const [scannedCouponDetails, setScannedCouponDetails] = useState<ScannedCouponDetails | null>(null);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    if (activeTab === 'scan-bin') fetchBinScanHistory();
+  }, [activeTab]);
+
+  const fetchBinScanHistory = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("scan_history")
+      .select("*")
+      .eq("profiles_id", user.id)
+      .order("scanned_at", { ascending: false })
+      .limit(5);
+    if (!error) setBinScanHistory(data || []);
+  };
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
     if (cooldownTime > 0) {
-      interval = setInterval(() => {
-        setCooldownTime(prev => prev - 1);
-      }, 1000);
+      timer = setInterval(() => setCooldownTime(t => t > 0 ? t - 1 : 0), 1000);
     }
-    return () => clearInterval(interval);
+    return () => clearInterval(timer);
   }, [cooldownTime]);
 
-  const formatCooldownTime = (seconds: number) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  const formatCooldownTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const rs = (s % 60).toString().padStart(2, '0');
+    return `${m}:${rs}`;
   };
 
-  const simulateQRScan = (scanType: 'bins' | 'coupons') => {
-    setIsScanning(true);
-    
-    setTimeout(() => {
-      const success = Math.random() > 0.2; // 80% success rate
-      
-      if (success) {
-        if (scanType === 'bins') {
-          const newScan = {
-            id: `BIN-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`,
-            type: 'bin',
-            location: ['Downtown Mall, Level 1', 'Metro Station, Platform 2', 'Shopping Complex, Floor 3', 'City Center, Main Plaza'][Math.floor(Math.random() * 4)],
-            timestamp: new Date().toLocaleString('en-IN', { 
-              year: 'numeric', 
-              month: '2-digit', 
-              day: '2-digit', 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            }),
-            points: 15
-          };
-          
-          setLastScan(newScan);
-          setScanHistory(prev => [newScan, ...prev.slice(0, 4)]);
-          setCooldownTime(300); // 5 minutes cooldown
-        } else {
-          // Coupon validation
-          const validCoupon = Math.random() > 0.3; // 70% valid coupons
-          
-          if (validCoupon) {
-            const newScan = {
-              id: `CP-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`,
-              type: 'coupon',
-              customer: ['John Doe', 'Sarah Miller', 'Mike Johnson', 'Lisa Wang'][Math.floor(Math.random() * 4)],
-              timestamp: new Date().toLocaleString('en-IN', { 
-                year: 'numeric', 
-                month: '2-digit', 
-                day: '2-digit', 
-                hour: '2-digit', 
-                minute: '2-digit' 
-              }),
-              value: [150, 299, 499, 199][Math.floor(Math.random() * 4)],
-              status: 'redeemed'
-            };
-            
-            setLastScan(newScan);
-            setScanHistory(prev => [newScan, ...prev.slice(0, 4)]);
-          } else {
-            setLastScan({ 
-              error: 'Invalid coupon', 
-              details: 'Coupon expired, already used, or not for this store' 
-            });
-          }
-        }
-      } else {
-        setLastScan({ error: 'No QR code detected' });
-      }
-      
-      setIsScanning(false);
-    }, 2000);
+  const handleBinScan = async (data: string) => {
+    if (data && isBinScanning && cooldownTime === 0) {
+      setIsBinScanning(false);
+      setNoBinQrMessage(false);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const points = Math.floor(Math.random() * 20) + 10;
+      const location = ["Site A", "Site B", "Site C"][Math.floor(Math.random() * 3)];
+
+      await supabase.from("scan_history").insert({
+        profiles_id: user.id,
+        trashbin_id: data,
+        location,
+        points_awarded: points,
+        scanned_at: new Date().toISOString(),
+        scan_type: "partner_scan",
+        status: "completed",
+      });
+
+      await supabase.rpc('increment_user_points', {
+        user_id_input: user.id,
+        points_to_add: points,
+      });
+
+      const newScan = { id: data, location, timestamp: new Date().toLocaleString("en-IN"), points };
+      setLastBinScan(newScan);
+      setCooldownTime(300);
+      fetchBinScanHistory();
+    }
   };
+
+  const handleScan = async (token: string, source: 'manual'|'scan' = 'manual') => {
+    if (source === 'scan') setIsCouponScanning(false);
+    if (!token.trim()) return;
+
+    setIsProcessing(true);
+    setScanResult(null);
+
+    const { data, error } = await supabase.rpc('validate_coupon_token', { token_input: token });
+
+    if (error) {
+      setScanResult({ type: 'error', message: error.message });
+    } else if (data && data.length > 0) {
+      setScannedCouponDetails(data[0]);
+      setShowRedeemModal(true);
+    } else {
+      setScanResult({ type: 'error', message: 'Coupon not found. It may have already been used or is expired.' });
+    }
+    
+    setIsProcessing(false);
+    setManualToken('');
+  };
+
+  const handleConfirmRedeem = async () => {
+    if (!scannedCouponDetails) return;
+
+    setIsProcessing(true);
+    const { data, error } = await supabase.rpc('confirm_redeem_owned_coupon', { 
+      owned_coupon_id_arg: scannedCouponDetails.owned_coupon_id 
+    });
+
+    if (error) {
+      setScanResult({ type: 'error', message: error.message });
+    } else {
+      setScanResult({ type: 'success', message: data });
+    }
+
+    setIsProcessing(false);
+    setShowRedeemModal(false);
+    setScannedCouponDetails(null);
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4 animate-in slide-in-from-top duration-500">
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-indigo-50 to-blue-50 pb-20 relative overflow-hidden">
+      <div className="absolute -top-32 -left-20 w-64 h-64 bg-purple-200/30 rounded-full blur-3xl"></div>
+      <div className="absolute -bottom-32 -right-10 w-80 h-80 bg-indigo-200/30 rounded-full blur-3xl"></div>
+
+      <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white p-4 shadow-lg relative z-10">
         <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => navigate(-1)}
-            className="p-2"
-          >
+          <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="p-2 text-white hover:bg-white/20 rounded-full transition">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-xl font-bold">Partner Scanner</h1>
-            <p className="text-sm text-gray-500">Scan trash bins and validate coupons</p>
+            <h1 className="text-xl font-bold">Scanner & Validator</h1>
+            <p className="text-indigo-100 text-sm">Scan bins or validate coupons</p>
           </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Scanner Tabs */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Camera className="w-5 h-5 text-green-600" />
-              Partner Scanner
-            </CardTitle>
-            <CardDescription>
-              Choose what you want to scan
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'bins' | 'coupons')} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="bins" className="flex items-center gap-2">
-                  <Trash2 className="w-4 h-4" />
-                  Trash Bins
-                </TabsTrigger>
-                <TabsTrigger value="coupons" className="flex items-center gap-2">
-                  <Gift className="w-4 h-4" />
-                  Coupons
-                </TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="bins" className="space-y-4">
-                <div className="text-center p-4 bg-green-50 rounded-lg">
-                  <Trash2 className="w-8 h-8 text-green-600 mx-auto mb-2" />
-                  <h3 className="font-medium text-green-800">Scan Trash Bins</h3>
-                  <p className="text-sm text-green-600">Earn 15 points per scan</p>
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="coupons" className="space-y-4">
-                <div className="text-center p-4 bg-purple-50 rounded-lg">
-                  <Gift className="w-8 h-8 text-purple-600 mx-auto mb-2" />
-                  <h3 className="font-medium text-purple-800">Validate Coupons</h3>
-                  <p className="text-sm text-purple-600">Verify customer coupons for redemption</p>
-                </div>
-              </TabsContent>
-            </Tabs>
+      <div className="max-w-3xl mx-auto px-4 mt-6 space-y-6 relative z-10">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList className="flex border rounded-lg overflow-hidden bg-white/50 backdrop-blur-sm">
+            <TabsTrigger value="scan-bin" className="flex-1 text-center py-2 data-[state=active]:bg-white data-[state=active]:text-purple-700">Scan Bin</TabsTrigger>
+            <TabsTrigger value="validate-coupon" className="flex-1 text-center py-2 data-[state=active]:bg-white data-[state=active]:text-purple-700">Validate Coupon</TabsTrigger>
+          </TabsList>
 
-            {/* Camera Simulation */}
-            <div className="relative bg-gray-900 rounded-lg aspect-square overflow-hidden mt-4">
-              <div className="absolute inset-0 flex items-center justify-center">
-                {isScanning ? (
-                  <div className="text-center text-white">
-                    <div className="animate-pulse">
-                      <QrCode className="w-16 h-16 mx-auto mb-2" />
-                      <p>Scanning...</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-white">
-                    <Camera className="w-16 h-16 mx-auto mb-2 opacity-50" />
-                    <p className="opacity-75">Camera View</p>
-                    <p className="text-sm opacity-50 mt-1">
-                      {activeTab === 'bins' ? 'Point at trash bin QR code' : 'Point at customer coupon QR code'}
-                    </p>
+          <TabsContent value="scan-bin" className="space-y-6">
+            <Card className="bg-white/70 backdrop-blur-md border-0 shadow-xl">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Camera className="w-5 h-5 text-green-600" />Scan Trash Bin</CardTitle>
+                <CardDescription>Earn points by scanning partner bin QR codes.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Button onClick={() => { setIsBinScanning(true); setNoBinQrMessage(false); }} disabled={cooldownTime > 0 || isBinScanning} className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:from-purple-700 hover:to-indigo-700">
+                  {cooldownTime > 0 ? `Next scan in ${formatCooldownTime(cooldownTime)}` : 'Start Bin Scan'}
+                </Button>
+                {isBinScanning && (
+                  <div className="p-4 border rounded-lg bg-white/80">
+                    <QrReader constraints={{ facingMode: 'environment' }} onResult={(res, err) => { if (res) handleBinScan(res.getText()); if (err && !noBinQrMessage) setNoBinQrMessage(true); }} />
+                    {noBinQrMessage && <p className="text-red-600 text-sm text-center mt-2">No QR detected. Please align again.</p>}
                   </div>
                 )}
-              </div>
-              
-              {/* Scanning overlay */}
-              <div className="absolute inset-0 border-2 border-white/30 rounded-lg">
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-green-400 rounded-lg"></div>
-              </div>
-            </div>
+                {lastBinScan && (
+                  <Card className="bg-green-50 border-green-200">
+                    <CardHeader><CardTitle className="text-green-700 flex items-center gap-2"><CheckCircle className="w-5 h-5" />Scan Success</CardTitle></CardHeader>
+                    <CardContent>
+                      <p className="font-semibold text-green-800">You earned +{lastBinScan.points} pts!</p>
+                      <p>Bin ID: <Badge>{lastBinScan.id}</Badge></p>
+                      <p>Location: {lastBinScan.location}</p>
+                      <p className="text-sm text-gray-600">{lastBinScan.timestamp}</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </CardContent>
+            </Card>
+            <Card className="bg-white/70 backdrop-blur-md border-0 shadow-lg">
+              <CardHeader><CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-gray-600" />Recent Bin Scans</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {binScanHistory.length > 0 ? (
+                  binScanHistory.map(scan => (
+                    <div key={scan.id} className="flex items-center justify-between p-3 border rounded-lg bg-white">
+                      <div>
+                        <p className="font-medium">ID: {scan.trashbin_id}</p>
+                        <p className="text-xs text-gray-500">{new Date(scan.scanned_at).toLocaleString('en-IN')}</p>
+                      </div>
+                      <Badge className="text-green-600 bg-green-100 border-0">+{scan.points_awarded} pts</Badge>
+                    </div>
+                  ))
+                ) : (<p className="text-gray-500 text-center">No recent scans</p>)}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-            {/* Scan Button */}
-            <Button 
-              onClick={() => simulateQRScan(activeTab)}
-              disabled={isScanning || (activeTab === 'bins' && cooldownTime > 0)}
-              className="w-full bg-primary hover:bg-primary/90 mt-4"
-              size="lg"
-            >
-              {isScanning ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
-                  Scanning...
-                </>
-              ) : cooldownTime > 0 && activeTab === 'bins' ? (
-                <>
-                  <Clock className="w-4 h-4 mr-2" />
-                  Cooldown: {formatCooldownTime(cooldownTime)}
-                </>
-              ) : (
-                <>
-                  <QrCode className="w-4 h-4 mr-2" />
-                  Scan {activeTab === 'bins' ? 'Bin' : 'Coupon'}
-                </>
-              )}
-            </Button>
-
-            {/* Cooldown info for bins only */}
-            {cooldownTime > 0 && activeTab === 'bins' && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mt-4">
-                <div className="flex items-center gap-2 text-orange-800">
-                  <Clock className="w-4 h-4" />
-                  <span className="text-sm">
-                    Next bin scan available in {formatCooldownTime(cooldownTime)}
-                  </span>
+          <TabsContent value="validate-coupon" className="space-y-6">
+            <Card className="bg-white/70 backdrop-blur-md border-0 shadow-xl">
+              <CardHeader>
+                <CardTitle>Coupon Validator</CardTitle>
+                <CardDescription>Scan a customer's QR code to validate their coupon.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <Input placeholder="Enter secure token manually..." value={manualToken} onChange={e => { setManualToken(e.target.value); setScanResult(null); }} />
+                  <Button onClick={() => handleScan(manualToken)} disabled={!manualToken.trim() || isProcessing} className="w-32">
+                    {isProcessing ? <Loader2 className="animate-spin" /> : 'Validate'}
+                  </Button>
                 </div>
-              </div>
+                <div className="relative flex items-center"><div className="flex-grow border-t border-gray-300"></div><span className="flex-shrink mx-4 text-sm text-gray-500">OR</span><div className="flex-grow border-t border-gray-300"></div></div>
+                <Button onClick={() => setIsCouponScanning(c => !c)} variant="outline" className="w-full flex items-center justify-center gap-2">
+                  {isCouponScanning ? 'Close Scanner' : 'Scan Coupon QR'} <Camera className="w-4 h-4" />
+                </Button>
+                {isCouponScanning && (
+                  <div className="p-4 border rounded-lg bg-white/80">
+                    <QrReader constraints={{ facingMode: 'environment' }} onResult={(res) => { if (res) handleScan(res.getText(), 'scan'); }} />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {scanResult && (
+              <Card className={scanResult.type === 'success' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}>
+                <CardHeader>
+                  <CardTitle className={`flex items-center gap-2 ${scanResult.type === 'success' ? 'text-green-700' : 'text-red-700'}`}>
+                    {scanResult.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <X className="w-5 h-5" />}
+                    {scanResult.type === 'success' ? 'Redemption Complete' : 'Validation Error'}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="text-gray-800 font-semibold">{scanResult.message}</CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Last Scan Result */}
-        {lastScan && (
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                {lastScan.error ? (
-                  <X className="w-5 h-5 text-red-600" />
-                ) : (
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                )}
-                Scan Result
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {lastScan.error ? (
-                <div className="text-center py-4">
-                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <X className="w-8 h-8 text-red-600" />
-                  </div>
-                  <p className="text-red-600 font-medium">{lastScan.error}</p>
-                  {lastScan.details && <p className="text-sm text-gray-500 mt-1">{lastScan.details}</p>}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <CheckCircle className="w-8 h-8 text-green-600" />
-                    </div>
-                    <h3 className="text-lg font-bold text-green-800">
-                      {lastScan.type === 'bin' ? 'Scan Successful!' : 'Coupon Validated!'}
-                    </h3>
-                    <p className="text-green-600">
-                      {lastScan.type === 'bin' ? 'You earned 15 points' : 'Coupon successfully redeemed'}
-                    </p>
-                  </div>
-                  
-                  <div className="bg-green-50 rounded-lg p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">
-                        {lastScan.type === 'bin' ? 'Bin ID:' : 'Coupon ID:'}
-                      </span>
-                      <Badge variant="outline">{lastScan.id}</Badge>
-                    </div>
-                    
-                    {lastScan.type === 'bin' ? (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-600">Location:</span>
-                          <div className="flex items-center gap-1 text-sm">
-                            <MapPin className="w-4 h-4 text-gray-500" />
-                            <span>{lastScan.location}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-600">Points Earned:</span>
-                          <div className="flex items-center gap-1">
-                            <Coins className="w-4 h-4 text-yellow-500" />
-                            <span className="font-bold text-green-600">+{lastScan.points}</span>
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-600">Customer:</span>
-                          <span className="text-sm font-medium">{lastScan.customer}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-600">Coupon Value:</span>
-                          <span className="text-sm font-bold text-green-600">₹{lastScan.value}</span>
-                        </div>
-                      </>
-                    )}
-                    
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Timestamp:</span>
-                      <span className="text-sm">{lastScan.timestamp}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Scan History */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
-          <CardHeader>
-            <CardTitle>Recent Scans</CardTitle>
-            <CardDescription>Your latest scanning activity</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {scanHistory.map((scan, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 ${scan.type === 'bin' ? 'bg-green-100' : 'bg-purple-100'} rounded-full flex items-center justify-center`}>
-                      {scan.type === 'bin' ? (
-                        <Trash2 className="w-5 h-5 text-green-600" />
-                      ) : (
-                        <Gift className="w-5 h-5 text-purple-600" />
-                      )}
-                    </div>
-                    <div>
-                      <p className="font-medium">{scan.id}</p>
-                      <p className="text-xs text-gray-500">
-                        {scan.type === 'bin' ? scan.location : `Customer: ${scan.customer}`}
-                      </p>
-                      <p className="text-xs text-gray-500">{scan.timestamp}</p>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className={`${scan.type === 'bin' ? 'text-green-600 border-green-200' : 'text-purple-600 border-purple-200'}`}>
-                    {scan.type === 'bin' ? `+${scan.points}` : `₹${scan.value}`}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+          </TabsContent>
+        </Tabs>
       </div>
+
+      {scannedCouponDetails && (
+        <Dialog open={showRedeemModal} onOpenChange={setShowRedeemModal}>
+          <DialogContent className="bg-white rounded-xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-xl">
+                <Gift className="w-5 h-5 text-purple-600" />
+                Confirm Redemption
+              </DialogTitle>
+              <DialogDescription>Please confirm the details before redeeming this coupon.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 my-4">
+              <div className="flex items-center gap-4">
+                <img src={scannedCouponDetails.product_image || '/placeholder.png'} alt={scannedCouponDetails.product_name} className="w-24 h-24 object-cover rounded-lg"/>
+                <div>
+                  <h3 className="font-bold text-lg">{scannedCouponDetails.product_name}</h3>
+                  <p className="text-sm text-gray-600">{scannedCouponDetails.shop_name}</p>
+                  <p className="font-bold text-purple-700 text-xl mt-1">₹{scannedCouponDetails.discounted_price}</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">Expires: {new Date(scannedCouponDetails.expiry_date).toLocaleDateString()}</p>
+            </div>
+            <DialogFooter className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => setShowRedeemModal(false)}>Cancel</Button>
+              <Button onClick={handleConfirmRedeem} disabled={isProcessing} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white">
+                {isProcessing ? <Loader2 className="animate-spin" /> : 'Confirm Redeem'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

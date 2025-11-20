@@ -41,13 +41,16 @@ export async function signUpUser(formData: SignUpForm) {
     const { error: profileError } = await supabase.from('profiles').insert([
       {
         id: authData.user.id, // Use id as primary key
-        name: fullName,
-        phone: phoneNumber || '',
+        full_name: fullName,
+        phone_number: phoneNumber || '',
+        email: email, // ✅ Save email to profiles table
         address: address || '',
         avatar_url: profilePhoto || '',
-        user_type: userType || '0', // Default to consumer if not specified
-        status: 'active',
-        created_at: new Date().toISOString(),
+        user_type: userType || 'CONSUMER', // Default to CONSUMER if not specified
+        email_notifications: true,
+        push_notifications: true,
+        sms_alerts: false,
+        location_tracking: true,
         updated_at: new Date().toISOString()
       },
     ]);
@@ -88,11 +91,14 @@ export async function getUserProfile() {
     // Return basic user data from auth if profile fetch fails
     return {
       id: user.id,
-      name: user.user_metadata?.name,
+      full_name: user.user_metadata?.full_name || user.user_metadata?.name,
       email: user.email,
-      phone: user.user_metadata?.phone,
-      user_type: user.user_metadata?.user_type || '0',
-      status: 'active',
+      phone_number: user.user_metadata?.phone_number || user.user_metadata?.phone,
+      user_type: user.user_metadata?.user_type || 'CONSUMER',
+      email_notifications: true,
+      push_notifications: true,
+      sms_alerts: false,
+      location_tracking: true,
       created_at: user.created_at,
       updated_at: user.created_at
     };
@@ -130,10 +136,14 @@ export async function updateUserProfile(profileData: any) {
           {
             id: user.id,
             ...dataToUpdate,
-            name: dataToUpdate.name || user.user_metadata?.name || '',
-            phone: dataToUpdate.phone || user.user_metadata?.phone || '',
-            user_type: user.user_metadata?.user_type || '0',
-            status: 'active',
+            full_name: dataToUpdate.full_name || dataToUpdate.name || user.user_metadata?.full_name || user.user_metadata?.name || '',
+            phone_number: dataToUpdate.phone_number || dataToUpdate.phone || user.user_metadata?.phone_number || user.user_metadata?.phone || '',
+            email: user.email,
+            user_type: user.user_metadata?.user_type || 'CONSUMER',
+            email_notifications: dataToUpdate.email_notifications ?? true,
+            push_notifications: dataToUpdate.push_notifications ?? true,
+            sms_alerts: dataToUpdate.sms_alerts ?? false,
+            location_tracking: dataToUpdate.location_tracking ?? true,
             created_at: new Date().toISOString()
           }
         ])

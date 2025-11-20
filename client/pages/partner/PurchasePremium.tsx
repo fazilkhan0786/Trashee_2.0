@@ -6,11 +6,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ArrowLeft, Crown, Check, Star, TrendingUp, Shield, BarChart, Users, Megaphone, Target } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { safeNavigateBack } from '@/lib/navigation';
+import { supabase } from '@/lib/supabase';
 
 export default function PartnerPurchasePremium() {
   const navigate = useNavigate();
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const plans = [
     {
@@ -52,13 +54,99 @@ export default function PartnerPurchasePremium() {
     setShowConfirmModal(true);
   };
 
-  const confirmPurchase = () => {
-    const plan = plans.find(p => p.id === selectedPlan);
-    if (plan) {
+  // Save transaction to transaction_history table
+  const saveTransaction = async (plan: any) => {
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+
+      // Create transaction record
+      const { data, error } = await supabase
+        .from('transaction_history')
+        .insert({
+          user_id: user.id,
+          type: 'premium_purchase', // You may need to add this to your enum constraint
+          description: `${plan.name} subscription - ${plan.period}ly`,
+          amount: plan.price,
+          status: 'completed',
+          reference_id: `premium_${plan.id}_${Date.now()}`,
+          metadata: {
+            plan_id: plan.id,
+            plan_name: plan.name,
+            billing_period: plan.period,
+            features: plan.features,
+            purchase_type: 'partner_premium'
+          }
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error saving transaction:', error);
+      throw error;
+    }
+  };
+
+  // Update user profile to mark as premium
+  const updateUserPremiumStatus = async (plan: any) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Calculate premium expiry date
+      const expiryDate = new Date();
+      if (plan.period === 'month') {
+        expiryDate.setMonth(expiryDate.getMonth() + 1);
+      } else if (plan.period === 'year') {
+        expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+      }
+
+      // Update user profile
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          is_premium: true,
+          premium_plan: plan.id,
+          premium_until: expiryDate.toISOString(),
+          premium_purchased_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error updating premium status:', error);
+      throw error;
+    }
+  };
+
+  const confirmPurchase = async () => {
+    if (!selectedPlan) return;
+
+    setLoading(true);
+    try {
+      const plan = plans.find(p => p.id === selectedPlan);
+      if (!plan) throw new Error('Invalid plan');
+
+      // Save transaction to database
+      await saveTransaction(plan);
+
+      // Update user premium status
+      await updateUserPremiumStatus(plan);
+
       console.log('Purchasing plan:', plan);
       alert(`🎉 Successfully upgraded to ${plan.name}! Your business is now Premium!`);
       setShowConfirmModal(false);
       navigate('/partner/home');
+    } catch (error) {
+      console.error('Purchase failed:', error);
+      alert('❌ Purchase failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -280,14 +368,22 @@ export default function PartnerPurchasePremium() {
           <DialogFooter className="flex-col sm:flex-col gap-2">
             <Button 
               onClick={confirmPurchase}
-              className="w-full bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white disabled:opacity-50"
             >
-              <Crown className="w-4 h-4 mr-2" />
-              Confirm Upgrade
+              {loading ? (
+                'Processing...'
+              ) : (
+                <>
+                  <Crown className="w-4 h-4 mr-2" />
+                  Confirm Upgrade
+                </>
+              )}
             </Button>
             <Button 
               variant="outline" 
               onClick={() => setShowConfirmModal(false)}
+              disabled={loading}
               className="w-full"
             >
               Cancel

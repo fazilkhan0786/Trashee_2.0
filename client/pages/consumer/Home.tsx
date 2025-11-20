@@ -11,34 +11,26 @@ import {
   Coins, QrCode, MapPin, Gift, Play, Users,
   Wallet, Bell, User, Crown
 } from 'lucide-react';
-
 import { Wheel } from 'react-custom-roulette';
 
 export default function ConsumerHome() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-
-  const [userData, setUserData] = useState<any>({
-    name: '',
-    level: 'Level 1',
+  // REMOVED: 'level' property from the state
+  const [userData, setUserData] = useState({
+    fullName: '',
     points: 0,
     profilePicture: '/placeholder.svg'
   });
-
-  const [weeklyScans, setWeeklyScans] = useState(0);
-  const [totalScans, setTotalScans] = useState(0);
-  const [scanHistory, setScanHistory] = useState<any[]>([]);
   const [offers, setOffers] = useState<any[]>([]);
 
   // Wheel states
   const [userId, setUserId] = useState<string | null>(null);
   const [spinAllowed, setSpinAllowed] = useState(false);
-  const [lastSpin, setLastSpin] = useState<Date | null>(null);
   const [mustSpin, setMustSpin] = useState(false);
   const [prizeNumber, setPrizeNumber] = useState(0);
   const [result, setResult] = useState<string | null>(null);
 
-  // ✅ Only points + better luck segments
   const segments = [
     { option: '5 Points', points: 5 },
     { option: 'Better Luck Next Time', points: 0 },
@@ -62,67 +54,40 @@ export default function ConsumerHome() {
         }
         setUserId(user.id);
 
-        // ✅ Get profile
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
+        const [profileRes, pointsRes, offersRes] = await Promise.all([
+          supabase.from('profiles').select('full_name, avatar_url').eq('id', user.id).single(),
+          supabase.from('user_points').select('points, last_spin_at').eq('user_id', user.id).single(),
+          supabase.from('featured_offers').select('*').order('created_at', { ascending: false }).limit(4)
+        ]);
 
-        // ✅ Get points + last spin
-        const { data: pointsRow } = await supabase
-          .from('user_points')
-          .select('points,last_spin_at')
-          .eq('user_id', user.id)
-          .single();
+        const { data: profile } = profileRes;
+        const { data: pointsRow } = pointsRes;
+        const { data: offersData, error: offersError } = offersRes;
 
-        // ✅ Get scans summary
-        const { data: scansRow } = await supabase
-          .from('user_scans_summary')
-          .select('weekly_scans,total_scans')
-          .eq('user_id', user.id)
-          .single();
-
-        // ✅ Get recent scan history (limit 4)
-        const { data: scansHistory } = await supabase
-          .from('scan_history')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(4);
-
-        // ✅ Get featured offers (limit 4)
-        const { data: offersData } = await supabase
-          .from('featured_offers')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(4);
-
+        // REMOVED: Logic for setting level
         setUserData({
-          name: profile?.name || user.user_metadata?.name || 'User',
-          level: profile?.level || 'Level 1',
+          fullName: profile?.full_name || user.email || 'User',
           points: pointsRow?.points || 0,
-          profilePicture: profile?.avatar_url || '/placeholder.svg'
+          profilePicture: profile?.avatar_url || '/placeholder.svg',
         });
 
-        setWeeklyScans(scansRow?.weekly_scans || 0);
-        setTotalScans(scansRow?.total_scans || 0);
-        setScanHistory(scansHistory || []);
-        setOffers(offersData || []);
+        if (offersError) {
+            console.error("Error fetching featured offers:", offersError);
+        } else {
+            setOffers(offersData || []);
+        }
 
-        // Spin availability check
         if (pointsRow?.last_spin_at) {
           const last = new Date(pointsRow.last_spin_at);
-          setLastSpin(last);
-
           const now = new Date();
           const diffHours = (now.getTime() - last.getTime()) / (1000 * 60 * 60);
           setSpinAllowed(diffHours >= 24);
         } else {
           setSpinAllowed(true);
         }
+
       } catch (err) {
-        console.error(err);
+        console.error("Error loading home page data:", err);
       } finally {
         setLoading(false);
       }
@@ -131,189 +96,216 @@ export default function ConsumerHome() {
     loadData();
   }, [navigate]);
 
-  const handleSpin = async () => {
-    if (!spinAllowed || !userId) return;
-
+  const handleSpin = () => {
+    if (!spinAllowed || mustSpin || !userId) return;
     const randomPrize = Math.floor(Math.random() * segments.length);
     setPrizeNumber(randomPrize);
     setMustSpin(true);
   };
 
   const handleStopSpinning = async () => {
+    setMustSpin(false);
     const prize = segments[prizeNumber];
     setResult(prize.option);
 
-    if (userId) {
+    if (!userId) return;
+
+    try {
+      const { error: spinUpdateError } = await supabase
+        .from('user_points')
+        .upsert({ user_id: userId, last_spin_at: new Date().toISOString() })
+        .eq('user_id', userId);
+
+      if (spinUpdateError) throw spinUpdateError;
+      
+      setSpinAllowed(false);
+
       if (prize.points > 0) {
-        // ✅ add points to user_points table
-        await supabase.rpc('increment_user_points', {
+        const { error: pointsError } = await supabase.rpc('increment_user_points', {
           user_id_input: userId,
           points_to_add: prize.points,
         });
-        setUserData((prev: any) => ({
+
+        if (pointsError) throw pointsError;
+
+        setUserData((prev) => ({
           ...prev,
           points: prev.points + prize.points
         }));
       }
 
-      // update last_spin_at
-      await supabase
-        .from('user_points')
-        .update({ last_spin_at: new Date().toISOString() })
-        .eq('user_id', userId);
+    } catch (error) {
+      console.error('Failed to save spin results:', error);
+      alert('There was an error saving your prize. Please try again later.');
     }
-
-    setSpinAllowed(false);
   };
 
   const quickActions = [
+    { icon: Wallet, label: 'My Wallet', href: '/consumer/wallet', color: 'bg-indigo-500' },
     { icon: QrCode, label: 'QR Scanner', href: '/consumer/scanner', color: 'bg-green-500' },
     { icon: MapPin, label: 'Bin Map', href: '/consumer/map', color: 'bg-blue-500' },
     { icon: Gift, label: 'Coupon Store', href: '/consumer/coupons', color: 'bg-purple-500' },
     { icon: Crown, label: 'Purchase Premium', href: '/consumer/purchase-premium', color: 'bg-gradient-to-r from-yellow-500 to-orange-500' },
     { icon: Play, label: 'Watch Ads', href: '/consumer/ads', color: 'bg-red-500' },
     { icon: Users, label: 'Refer Friends', href: '/consumer/refer', color: 'bg-orange-500' },
-    { icon: Wallet, label: 'My Wallet', href: '/consumer/wallet', color: 'bg-indigo-500' },
     { icon: Bell, label: 'Notifications', href: '/consumer/notifications', color: 'bg-pink-500' },
     { icon: User, label: 'Profile', href: '/consumer/profile', color: 'bg-gray-500' },
-    // 🚫 no Wheel of Luck here
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-green-50 to-white pb-24">
       <PremiumPopup userType="consumer" />
-      
-      {/* Header */}
-      <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <Avatar className="w-12 h-12 border-2 border-white">
-              <AvatarImage src={userData.profilePicture} />
-              <AvatarFallback>{userData.name?.[0]}</AvatarFallback>
-            </Avatar>
-            <div>
-              <h1 className="text-xl font-bold">Hello, {loading ? '...' : userData.name}!</h1>
-              <p className="text-green-100 text-sm">Consumer • {userData.level}</p>
+
+      <div className="relative bg-gradient-to-r from-emerald-600 to-green-700 text-white">
+        <div className="absolute -top-10 -left-10 w-40 h-40 rounded-full bg-emerald-400/30 blur-2xl" />
+        <div className="absolute -bottom-12 -right-12 w-56 h-56 rounded-full bg-green-400/20 blur-3xl" />
+
+        <div className="max-w-5xl mx-auto p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Avatar className="w-14 h-14 ring-2 ring-white/70 shadow-md">
+                <AvatarImage src={userData.profilePicture} />
+                <AvatarFallback>{userData.fullName?.[0]}</AvatarFallback>
+              </Avatar>
+              <div>
+                <h1 className="text-2xl font-bold">
+                  Hello, {loading ? '...' : userData.fullName}!
+                </h1>
+                <div className="flex items-center gap-2 mt-1">
+                  {/* REMOVED: The Badge component for the level */}
+                  <Badge className="bg-white/15 text-white border-white/30">Consumer</Badge>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="text-right">
-            <div className="flex items-center gap-2 mb-1">
-              <Coins className="w-5 h-5 text-yellow-300" />
-              <span className="text-2xl font-bold">{userData.points.toLocaleString()}</span>
+
+            <div className="text-right">
+              <div className="flex items-center justify-end gap-2 mb-1">
+                <Coins className="w-5 h-5 text-yellow-300" />
+                <span className="text-3xl font-extrabold drop-shadow-sm">
+                  {userData.points.toLocaleString()}
+                </span>
+              </div>
+              <p className="text-emerald-100 text-sm">Reward Points</p>
+              <div className="mt-2">
+                {spinAllowed ? (
+                  <Badge className="bg-green-500 text-white">Spin Ready</Badge>
+                ) : (
+                  <Badge className="bg-amber-500 text-white">Come back tomorrow</Badge>
+                )}
+              </div>
             </div>
-            <p className="text-green-100 text-sm">Reward Points</p>
           </div>
         </div>
       </div>
 
-      <AdminAdsDisplay userType="consumers" placement="home_top" />
+      <div className="max-w-5xl mx-auto px-4 -mt-4">
+        <AdminAdsDisplay userType="consumers" placement="home_top" />
+      </div>
 
-      <div className="p-4 space-y-6">
+      <div className="max-w-5xl mx-auto p-4 space-y-6">
 
-        {/* Scans Summary */}
-        <Card>
-          <CardHeader><CardTitle>Scans Summary</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4">
-            <div className="text-center p-3 bg-blue-50 rounded-lg">
-              <span className="text-2xl font-bold">{weeklyScans}</span>
-              <p className="text-sm text-blue-600">This Week</p>
-            </div>
-            <div className="text-center p-3 bg-purple-50 rounded-lg">
-              <span className="text-2xl font-bold">{totalScans}</span>
-              <p className="text-sm text-purple-600">Total Scans</p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl bg-gradient-to-r from-emerald-400/60 to-green-500/60 p-[1px] shadow-lg">
+          <Card className="rounded-[15px] border-0 shadow-lg">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 text-xs">🎯</span>
+                Wheel of Luck
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-white to-emerald-50">
+                <Wheel
+                  mustStartSpinning={mustSpin}
+                  prizeNumber={prizeNumber}
+                  data={segments}
+                  onStopSpinning={handleStopSpinning}
+                  backgroundColors={['#059669', '#10B981', '#34D399', '#047857']}
+                  textColors={['#fff']}
+                  outerBorderWidth={8}
+                  radiusLineWidth={2}
+                  fontSize={14}
+                />
+              </div>
 
-        {/* Wheel of Luck */}
-        <Card>
-          <CardHeader><CardTitle>Wheel of Luck</CardTitle></CardHeader>
-          <CardContent className="flex flex-col items-center">
-            <Wheel
-              mustStartSpinning={mustSpin}
-              prizeNumber={prizeNumber}
-              data={segments}
-              onStopSpinning={handleStopSpinning}
-              backgroundColors={['#f94144','#90be6d','#f3722c','#577590']}
-              textColors={['#fff']}
-              outerBorderWidth={6}
-              radiusLineWidth={2}
-              fontSize={14}
-            />
+              <Button
+                onClick={handleSpin}
+                className="mt-6 h-11 px-6 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 shadow-md"
+                disabled={!spinAllowed || mustSpin}
+              >
+                {mustSpin ? 'Spinning...' : (spinAllowed ? 'Spin Now' : 'Come Back Tomorrow')}
+              </Button>
 
-            <Button
-              onClick={handleSpin}
-              className="mt-6"
-              disabled={!spinAllowed}
-            >
-              {spinAllowed ? 'Spin Now' : 'Come Back Tomorrow'}
-            </Button>
+              {result && (
+                <p className={`mt-4 text-base sm:text-lg font-medium ${result.includes('Points') ? 'text-emerald-700' : 'text-gray-600'}`}>
+                  You got: <span className="font-bold">{result}</span>
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-            {result && (
-              <p className="mt-4 text-lg font-medium">
-                You got: <span className="font-bold">{result}</span>
-              </p>
+        <Card className="border-0 shadow-md">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 text-xs">🏷️</span>
+              Featured Offers
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {offers.map((offer) => (
+              <Link key={offer.id} to={offer.link}>
+                <div className="group relative overflow-hidden rounded-xl border bg-white hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5">
+                  {offer.image_url && (
+                    <div className="relative">
+                      <img
+                        src={offer.image_url}
+                        alt={offer.title}
+                        className="w-full h-40 object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-70 group-hover:opacity-80 transition" />
+                    </div>
+                  )}
+                  <div className="p-3">
+                    <h3 className="font-semibold text-gray-800">{offer.title}</h3>
+                    <p className="text-sm text-gray-500 line-clamp-2">{offer.description}</p>
+                    <div className="mt-2 text-primary text-sm inline-flex items-center gap-1 group-hover:gap-2 transition-all">
+                      View offer
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+            {loading === false && offers.length === 0 && (
+              <div className="col-span-full text-center text-gray-500 py-6">
+                No offers available right now. Check back soon!
+              </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Scan History */}
-        <Card>
-          <CardHeader><CardTitle>Scan History</CardTitle></CardHeader>
-          <CardContent>
-            {scanHistory.map((scan, i) => (
-              <div key={i} className="flex justify-between p-2 border rounded mb-2">
-                <div>
-                  <p className="font-medium">{scan.bin_id}</p>
-                  <p className="text-xs text-gray-500">{new Date(scan.created_at).toLocaleString()}</p>
-                </div>
-                <Badge>+{scan.points}</Badge>
-              </div>
-            ))}
-            <Button variant="outline" className="w-full mt-2" onClick={() => navigate('/consumer/scan-history')}>
-              View All
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Featured Offers */}
-        <Card>
-          <CardHeader><CardTitle>Featured Offers</CardTitle></CardHeader>
-          <CardContent>
-            {offers.map((offer) => (
-              <Link key={offer.id} to={offer.link}>
-                <div className="border rounded-lg p-3 flex gap-3 hover:shadow-md">
-                  {offer.image && (
-                    <img src={offer.image} alt={offer.title} className="w-16 h-16 rounded-lg object-cover" />
-                  )}
-                  <div>
-                    <h3 className="font-medium">{offer.title}</h3>
-                    <p className="text-sm text-gray-500">{offer.description}</p>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* Quick Actions */}
-        <Card>
-          <CardHeader><CardTitle>All Features</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4">
+        <Card className="border-0 shadow-md">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 text-xs">🧭</span>
+              All Features
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {quickActions.map((a, i) => (
               <Link key={i} to={a.href}>
-                <div className="flex flex-col items-center p-4 border rounded-lg hover:shadow-lg">
-                  <div className={`w-12 h-12 ${a.color} rounded-full flex items-center justify-center mb-2`}>
+                <div className="group flex flex-col items-center p-4 rounded-xl border border-gray-200 bg-white shadow-sm hover:shadow-lg hover:border-emerald-300 transition-all duration-200 hover:-translate-y-0.5">
+                  <div className={`w-12 h-12 ${a.color} rounded-xl flex items-center justify-center mb-2 shadow-md ring-2 ring-white group-hover:scale-105 transition`}>
                     <a.icon className="w-6 h-6 text-white" />
                   </div>
-                  <span className="text-sm font-medium">{a.label}</span>
+                  <span className="text-sm font-medium text-gray-800 text-center">{a.label}</span>
                 </div>
               </Link>
             ))}
           </CardContent>
         </Card>
-
       </div>
     </div>
   );
 }
+

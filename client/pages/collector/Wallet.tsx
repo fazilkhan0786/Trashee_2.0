@@ -1,661 +1,330 @@
-import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { ArrowLeft, Wallet, ArrowUpRight, ArrowDownLeft, Plus, Minus, Calendar, Filter, Download, TrendingUp, Coins, Gift, CreditCard, Truck, Target, Play } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-
-interface Transaction {
-  id: string;
-  type: 'earned' | 'spent' | 'bonus' | 'refund';
-  category: 'collection' | 'referral' | 'bonus' | 'purchase' | 'withdrawal' | 'ad_watch';
-  amount: number;
-  description: string;
-  date: string;
-  status: 'completed' | 'pending' | 'failed';
-  details?: string;
-}
+import React, { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { ArrowLeft, QrCode, Calendar, Coins, Gift, Bell, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { generateCouponToken } from "../../lib/couponStoreService";
+import { supabase } from "../../lib/supabase";
+import QRCode from "react-qr-code";
 
 interface OwnedCoupon {
   id: string;
-  productName: string;
-  shopName: string;
-  originalPrice: number;
-  discountedPrice: number;
-  pointsUsed: number;
-  purchaseDate: string;
-  expiryDate: string;
-  status: 'active' | 'used' | 'expired';
-  qrCode: string;
-  category: string;
+  user_id: string;
+  coupon_id: string;
+  product_name: string;
+  shop_name: string;
+  shop_logo: string | null;
+  product_image: string | null;
+  value: number;
+  discounted_price: number;
+  redeemed_date: string | null;
+  expiry_date: string;
+  status: string;
+  qr_code: string | null;
+  shop_address: string | null;
+  shop_phone: string | null;
+  created_at: string;
+  updated_at: string;
+  claimed_at: string | null;
 }
 
-export default function CollectorWallet() {
+interface Transaction { id: string; user_id: string; type: string; description: string; amount: number; status: string; reference_id?: string; created_at: string; }
+
+export default function WalletPage() {
   const navigate = useNavigate();
-  const [filterType, setFilterType] = useState('all');
-  const [filterCategory, setFilterCategory] = useState('all');
-  const [showWithdrawDialog, setShowWithdrawDialog] = useState(false);
-  const [showTransferDialog, setShowTransferDialog] = useState(false);
-  const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawMethod, setWithdrawMethod] = useState('');
-  const [transferAmount, setTransferAmount] = useState('');
-  const [transferRecipient, setTransferRecipient] = useState('');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [coupons, setCoupons] = useState<OwnedCoupon[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [points, setPoints] = useState(0); 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedCoupon, setSelectedCoupon] = useState<OwnedCoupon | null>(null);
+  const [showQRCode, setShowQRCode] = useState(false);
+  
+  const [qrToken, setQrToken] = useState<string | null>(null);
+  const [isTokenLoading, setIsTokenLoading] = useState(false);
 
-  const [ownedCoupons] = useState<OwnedCoupon[]>([
-    
-  ]);
+  useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { navigate("/login", { replace: true }); return; }
+      setUserId(user.id);
+    };
+    fetchUser();
+  }, [navigate]);
 
-  const [transactions] = useState<Transaction[]>([
-    
-  ]);
+  useEffect(() => {
+    if (!userId) return;
+    const fetchData = async () => {
+      setLoading(true);
+      setError(null);
 
-  const walletStats = {
-    currentBalance: 0,
-    totalEarned: 0,
-    totalSpent: 0,
-    totalWithdrawn: 0,
-    monthlyEarnings: 0,
-    averageDaily: 0,
-    rank: 'broonze Collector',
-    nextMilestone: 500
-  };
+      const [couponRes, pointsRes, txsRes] = await Promise.all([
+        supabase
+          .from("owned_coupons")
+          .select("*")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("user_points")
+          .select("points")
+          .eq("user_id", userId)
+          .single(),
+        supabase
+          .from("transaction_history")
+          .select("*")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+      ]);
 
-  const filteredTransactions = transactions.filter(transaction => {
-    const matchesType = filterType === 'all' || filterType === '' || transaction.type === filterType;
-    const matchesCategory = filterCategory === 'all' || filterCategory === '' || transaction.category === filterCategory;
-    return matchesType && matchesCategory;
-  });
-
-  const getTransactionIcon = (type: string, category: string) => {
-    if (type === 'earned') {
-      switch (category) {
-        case 'collection': return <Truck className="w-4 h-4 text-green-600" />;
-        case 'referral': return <Gift className="w-4 h-4 text-purple-600" />;
-        case 'bonus': return <Target className="w-4 h-4 text-orange-600" />;
-        case 'ad_watch': return <Play className="w-4 h-4 text-blue-600" />;
-        default: return <ArrowDownLeft className="w-4 h-4 text-green-600" />;
+      // Process coupons
+      if (couponRes.error) {
+        setError(couponRes.error.message || "Failed to fetch coupons");
+      } else if (couponRes.data) {
+        setCoupons(couponRes.data);
       }
+      
+      // Process points
+      if (pointsRes.error && pointsRes.error.code !== 'PGRST116') { // Ignore "no row" error
+        console.error("Error fetching points:", pointsRes.error);
+      } else if (pointsRes.data) {
+        setPoints(pointsRes.data.points || 0);
+      }
+
+      // Process transactions
+      if (txsRes.error) {
+        console.error("Error fetching transactions:", txsRes.error);
+      } else if (txsRes.data) {
+        setTransactions(txsRes.data);
+      }
+
+      setLoading(false);
+    };
+    fetchData();
+  }, [userId]);
+
+  const getDaysUntilExpiry = (expiryDate: string | null) => {
+    if (!expiryDate) return NaN;
+    const expiry = new Date(expiryDate);
+    const today = new Date();
+    const diffTime = Math.max(0, expiry.getTime() - today.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  };
+
+  const handleShowQrCode = async (coupon: OwnedCoupon) => {
+    setSelectedCoupon(coupon);
+    setShowQRCode(true);
+    setIsTokenLoading(true);
+    setQrToken(null); 
+
+    const res = await generateCouponToken(coupon.id);
+    if (res.success && res.token) {
+      setQrToken(res.token);
     } else {
-      return <ArrowUpRight className="w-4 h-4 text-red-600" />;
+      console.error("Failed to generate QR token:", res.error);
     }
+    setIsTokenLoading(false);
   };
 
-  const getTransactionColor = (type: string) => {
-    return type === 'earned' ? 'text-green-600' : 'text-red-600';
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const handleWithdraw = () => {
-    if (!withdrawAmount || !withdrawMethod) return;
-
-    console.log('Processing withdrawal:', { amount: withdrawAmount, method: withdrawMethod });
-    alert(`✅ Withdrawal initiated!\n\nAmount: ${withdrawAmount} points\nMethod: ${withdrawMethod}\nExpected amount: ₹${(Number(withdrawAmount) * 0.10 - 5).toFixed(2)}`);
-    setShowWithdrawDialog(false);
-    setWithdrawAmount('');
-    setWithdrawMethod('');
-  };
-
-  const handleTransfer = () => {
-    if (!transferAmount || !transferRecipient) return;
-
-    console.log('Processing transfer:', { amount: transferAmount, recipient: transferRecipient });
-    alert(`✅ Transfer completed!\n\nAmount: ${transferAmount} points\nRecipient: ${transferRecipient}`);
-    setShowTransferDialog(false);
-    setTransferAmount('');
-    setTransferRecipient('');
-  };
-
-  const handleExportData = () => {
-    console.log('Exporting transaction data');
-    alert('📊 Transaction data exported successfully!\n\nCheck your downloads folder for the CSV file.');
-  };
-
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'collection_history':
-        navigate('/collector/scan-history');
-        break;
-      case 'redeem_points':
-        navigate('/collector/coupons');
-        break;
-      case 'set_goals':
-        alert('🎯 Goal setting feature coming soon!\n\nSet daily and weekly collection targets.');
-        break;
-      case 'export_data':
-        handleExportData();
-        break;
-      default:
-        break;
-    }
-  };
+  if (loading) return (
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-cyan-50 flex items-center justify-center p-4">
+      <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-600"></div>
+      <p className="ml-4 text-blue-700 font-medium">Loading your wallet...</p>
+    </div>
+  );
+  if (error) return (
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-cyan-50 flex items-center justify-center p-4">
+      <div className="bg-rose-50 border border-rose-200 text-rose-700 p-6 rounded-xl text-center">
+        <p className="font-medium">{error}</p>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Header */}
-      <div className="bg-green-600 text-white p-4 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => navigate(-1)}
-            className="p-2 text-white hover:bg-white/20"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex-1">
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <Wallet className="w-6 h-6" />
-              My Wallet
-            </h1>
-            <p className="text-sm opacity-90">Track earnings and manage your finances</p>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 pb-20 p-4">
+      {/* Enhanced Header */}
+      <div className="bg-gradient-to-r from-blue-700 to-cyan-600 text-white">
+        <div className="max-w-6xl mx-auto p-6">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="p-2 rounded-full hover:bg-white/20 transition-colors">
+              <ArrowLeft className="w-5 h-5 text-white" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
+                <Coins className="w-6 h-6" />
+                My Wallet
+              </h1>
+              <p className="text-blue-100 mt-1">Manage your coupons and transactions</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Balance Card */}
-        <Card className="bg-gradient-to-r from-green-600 to-blue-600 text-white border-0 animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold opacity-90">Current Balance</h2>
-                <div className="text-4xl font-bold mt-2">{walletStats.currentBalance.toLocaleString()}</div>
-                <p className="text-sm opacity-75 mt-1">points available</p>
-              </div>
-              <div className="text-right">
-                <Badge className="bg-white/20 text-white mb-2">
-                  {walletStats.rank}
-                </Badge>
-                <div className="text-sm opacity-75">
-                  {walletStats.nextMilestone} points to next level
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex gap-3 mt-6">
-              <Dialog open={showWithdrawDialog} onOpenChange={setShowWithdrawDialog}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="flex-1 text-white border-white hover:bg-white hover:text-green-600">
-                    <ArrowUpRight className="w-4 h-4 mr-2" />
-                    Withdraw
-                  </Button>
-                </DialogTrigger>
-              </Dialog>
-              
-              <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="flex-1 text-white border-white hover:bg-white hover:text-green-600">
-                    <CreditCard className="w-4 h-4 mr-2" />
-                    Transfer
-                  </Button>
-                </DialogTrigger>
-              </Dialog>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-600">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                  <TrendingUp className="w-5 h-5 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-green-600">{walletStats.totalEarned.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">Total Earned</p>
-                </div>
-              </div>
+      <div className="max-w-6xl mx-auto p-4 space-y-6">
+        {/* Enhanced Stats Overview */}
+        <div className="grid grid-cols-2 gap-4">
+          <Card className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-100 rounded-3xl shadow-md hover:shadow-lg transition-shadow animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
+            <CardContent className="p-4 text-center">
+              <Gift className="w-10 h-10 text-blue-600 mx-auto mb-3" />
+              <p className="text-2xl font-bold">{coupons.length}</p>
+              <p className="text-xs text-gray-600">Total Coupons</p>
             </CardContent>
           </Card>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-blue-600">{walletStats.monthlyEarnings.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">This Month</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-800">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                  <Target className="w-5 h-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-purple-600">{walletStats.averageDaily}</p>
-                  <p className="text-xs text-gray-500">Daily Average</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-900">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                  <ArrowUpRight className="w-5 h-5 text-orange-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-orange-600">{walletStats.totalWithdrawn.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">Withdrawn</p>
-                </div>
-              </div>
+          <Card className="bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-100 rounded-3xl shadow-md hover:shadow-lg transition-shadow animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
+            <CardContent className="p-4 text-center">
+              <Coins className="w-10 h-10 text-purple-600 mx-auto mb-3" />
+              <p className="text-2xl font-bold">{points}</p>
+              <p className="text-xs text-gray-600">Total Points</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Quick Actions */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1000">
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Button
-                variant="outline"
-                className="h-16 flex-col gap-2"
-                onClick={() => handleQuickAction('collection_history')}
-              >
-                <Truck className="w-6 h-6" />
-                <span className="text-xs">Collection History</span>
-              </Button>
+        <Tabs defaultValue="coupons" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2 p-1 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-3xl">
+            <TabsTrigger value="coupons" className="flex items-center gap-2 rounded-lg p-4 text-center font-medium transition-all data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-md">
+              <Gift className="w-5 h-5" /> Coupons
+            </TabsTrigger>
+            <TabsTrigger value="payments" className="flex items-center gap-2 rounded-lg p-4 text-center font-medium transition-all data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-md">
+              <Coins className="w-5 h-5" /> Transactions
+            </TabsTrigger>
+          </TabsList>
 
-              <Button
-                variant="outline"
-                className="h-16 flex-col gap-2"
-                onClick={() => handleQuickAction('redeem_points')}
-              >
-                <Gift className="w-6 h-6" />
-                <span className="text-xs">Redeem Points</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-16 flex-col gap-2"
-                onClick={() => handleQuickAction('set_goals')}
-              >
-                <Target className="w-6 h-6" />
-                <span className="text-xs">Set Goals</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-16 flex-col gap-2"
-                onClick={() => handleQuickAction('export_data')}
-              >
-                <Download className="w-6 h-6" />
-                <span className="text-xs">Export Data</span>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Owned Coupons Section */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1050">
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <Gift className="w-5 h-5" />
-                My Coupons ({ownedCoupons.length})
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate('/collector/coupons')}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Get More
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {ownedCoupons.length > 0 ? (
-              <div className="space-y-3">
-                {ownedCoupons.map((coupon) => (
-                  <div key={coupon.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-medium text-sm">{coupon.productName}</h4>
-                          <Badge
-                            className={
-                              coupon.status === 'active'
-                                ? 'bg-green-100 text-green-800'
-                                : coupon.status === 'used'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-red-100 text-red-800'
-                            }
-                          >
-                            {coupon.status}
-                          </Badge>
-                        </div>
-
-                        <p className="text-sm text-gray-600 mb-2">{coupon.shopName}</p>
-
-                        <div className="flex items-center gap-4 text-xs text-gray-500 mb-3">
-                          <span>Purchased: {coupon.purchaseDate}</span>
-                          <span>Expires: {coupon.expiryDate}</span>
-                          <span className="flex items-center gap-1">
-                            <Coins className="w-3 h-3" />
-                            {coupon.pointsUsed} points
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-green-600">₹{coupon.discountedPrice}</span>
-                            <span className="text-sm text-gray-500 line-through">₹{coupon.originalPrice}</span>
-                          </div>
-
+          <TabsContent value="coupons" className="space-y-4">
+            {coupons.length === 0 ? (
+              <div className="text-center py-12">
+                <Gift className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No coupons yet.</p>
+              </div>
+            ) : (
+              coupons.map((coupon) => {
+                const daysLeft = getDaysUntilExpiry(coupon.expiry_date);
+                return (
+                  <Card key={coupon.id} className="border border-blue-100 shadow-md rounded-3xl overflow-hidden hover:shadow-2xl transition-all duration-300">
+                    <CardContent className="p-4">
+                      <div className="flex gap-4">
+                        <div className="relative">
+                          <img src={coupon.product_image || "/placeholder.png"} alt={coupon.product_name} className="w-20 h-20 rounded-xl object-cover border border-gray-100" />
                           {coupon.status === 'active' && (
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => alert(`QR Code: ${coupon.qrCode}\n\nShow this code at the store to redeem your coupon.`)}
+                            <div className="absolute inset-0 bg-black/30 flex items-center justify-center rounded-xl opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Button 
+                                onClick={() => handleShowQrCode(coupon)}
+                                className="bg-white/80 text-blue-600 px-3 py-1 rounded-lg font-medium text-sm"
                               >
-                                View QR
-                              </Button>
-                              <Button
-                                size="sm"
-                                onClick={() => alert(`✅ Coupon used successfully!\n\n${coupon.productName} at ${coupon.shopName}`)}
-                              >
-                                Use Now
+                                <QrCode className="w-4 h-4 mr-1" />
+                                Redeem
                               </Button>
                             </div>
                           )}
-
-                          {coupon.status === 'used' && (
-                            <Badge variant="outline" className="text-blue-600 border-blue-200">
-                              ✓ Used
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h3 className="font-bold text-lg text-gray-800">{coupon.product_name}</h3>
+                              <p className="text-sm text-gray-600">{coupon.shop_name}</p>
+                            </div>
+                            {/* --- THIS IS THE FIXED LINE --- */}
+                            <Badge variant={coupon.status === "active" ? "default" : coupon.status === "expired" ? "destructive" : "secondary"} className="text-xs">
+                              {coupon.status}
                             </Badge>
-                          )}
-
-                          {coupon.status === 'expired' && (
-                            <Badge variant="outline" className="text-red-600 border-red-200">
-                              ⏰ Expired
-                            </Badge>
-                          )}
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-gray-500 mb-3">
+                            <Calendar className="w-4 h-4 text-gray-400" />
+                            <span>Expires: {new Date(coupon.expiry_date).toLocaleDateString()}</span>
+                            {coupon.status === "active" && !isNaN(daysLeft) && (
+                              <div className="flex items-center gap-1">
+                                <Bell className="w-4 h-4 text-yellow-400" />
+                                <span className={daysLeft <= 7 ? "text-red-600 font-medium" : "text-gray-600"}>
+                                  {daysLeft} days left
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => handleShowQrCode(coupon)}>
+                              <QrCode className="w-4 h-4 mr-1" /> QR Code
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
+                );
+              })
+            )}
+          </TabsContent>
+          
+          <TabsContent value="payments">
+            {transactions.length > 0 ? (
+              <div className="space-y-4">
+                {transactions.map(tx => (
+                  <Card key={tx.id} className="border border-gray-100 shadow-md rounded-3xl">
+                    <CardContent className="p-4 flex justify-between items-center">
+                      <div>
+                        <p className="font-bold">{tx.description}</p>
+                        <p className="text-sm text-gray-500">{new Date(tx.created_at).toLocaleString()}</p>
+                      </div>
+                      <div className={`font-bold text-lg ${tx.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
+                        {tx.type === 'credit' ? '+' : '-'}{tx.amount}
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8">
-                <Gift className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <p className="text-gray-500 mb-2">No coupons owned yet</p>
-                <p className="text-sm text-gray-400 mb-4">Start redeeming points for exclusive collector deals</p>
-                <Button onClick={() => navigate('/collector/coupons')}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Browse Coupons
+              <div className="text-center py-12">
+                <Coins className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No transactions yet.</p>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {/* Enhanced QR Code Dialog */}
+      <Dialog open={showQRCode} onOpenChange={(isOpen) => { if (!isOpen) { setQrToken(null); } setShowQRCode(isOpen); }}>
+        <DialogContent className="bg-gradient-to-b from-white to-gray-50 rounded-3xl border border-blue-100 shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl text-blue-800">
+              <QrCode className="w-5 h-5 text-blue-600" /> Coupon QR Code
+            </DialogTitle>
+            {selectedCoupon && (
+              <DialogDescription className="text-gray-600">
+                Show this code at {selectedCoupon.shop_name} to redeem. It will expire in 5 minutes.
+              </DialogDescription>
+            )}
+          </DialogHeader>
+          <div className="flex justify-center items-center p-6 h-64">
+            {isTokenLoading && (
+              <div className="flex flex-col items-center">
+                <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+                <p className="mt-2 text-gray-600">Generating QR code...</p>
+              </div>
+            )}
+            {!isTokenLoading && qrToken && <QRCode value={qrToken} size={200} fgColor="#1E40AF" />}
+            {!isTokenLoading && !qrToken && (
+              <div className="text-center">
+                <Bell className="w-16 h-16 text-rose-400 mx-auto mb-4" />
+                <p className="text-rose-700 text-lg font-medium">Failed to generate QR code</p>
+                <p className="text-gray-500 mt-2">Please try again later</p>
+                <Button 
+                  onClick={() => setShowQRCode(false)} 
+                  className="mt-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-full py-2 px-4"
+                >
+                  Close
                 </Button>
               </div>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Filters */}
-        <div className="flex gap-3">
-          <Select value={filterType} onValueChange={setFilterType}>
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder="Transaction Type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              <SelectItem value="earned">Earned</SelectItem>
-              <SelectItem value="spent">Spent</SelectItem>
-              <SelectItem value="bonus">Bonus</SelectItem>
-              <SelectItem value="refund">Refund</SelectItem>
-            </SelectContent>
-          </Select>
-          
-          <Select value={filterCategory} onValueChange={setFilterCategory}>
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder="Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              <SelectItem value="collection">Collection</SelectItem>
-              <SelectItem value="referral">Referral</SelectItem>
-              <SelectItem value="bonus">Bonus</SelectItem>
-              <SelectItem value="purchase">Purchase</SelectItem>
-              <SelectItem value="withdrawal">Withdrawal</SelectItem>
-              <SelectItem value="ad_watch">Ad Watching</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Transaction History */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1100">
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Transaction History</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportData}
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Export
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {filteredTransactions.map((transaction) => (
-                <div key={transaction.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                      {getTransactionIcon(transaction.type, transaction.category)}
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-sm">{transaction.description}</h4>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs text-gray-500">{transaction.date}</span>
-                        <Badge className={getStatusColor(transaction.status)} variant="outline">
-                          {transaction.status}
-                        </Badge>
-                        {transaction.details && (
-                          <span className="text-xs text-gray-400">• {transaction.details}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="text-right">
-                    <div className={`font-bold ${getTransactionColor(transaction.type)}`}>
-                      {transaction.amount > 0 ? '+' : ''}{transaction.amount.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-gray-500">points</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            {filteredTransactions.length === 0 && (
-              <div className="text-center py-8">
-                <Wallet className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <p className="text-gray-500">No transactions found</p>
-                <p className="text-sm text-gray-400">Try adjusting your filters</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Withdraw Dialog */}
-      <Dialog open={showWithdrawDialog} onOpenChange={setShowWithdrawDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ArrowUpRight className="w-5 h-5" />
-              Withdraw Points
-            </DialogTitle>
-            <DialogDescription>
-              Convert your points to cash and withdraw to your bank account
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="amount">Withdrawal Amount</Label>
-              <Input
-                id="amount"
-                type="number"
-                placeholder="Enter points to withdraw"
-                value={withdrawAmount}
-                onChange={(e) => setWithdrawAmount(e.target.value)}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Available balance: {walletStats.currentBalance.toLocaleString()} points
-              </p>
-            </div>
-            
-            <div>
-              <Label htmlFor="method">Withdrawal Method</Label>
-              <Select value={withdrawMethod} onValueChange={setWithdrawMethod}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select withdrawal method" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  <SelectItem value="upi">UPI Transfer</SelectItem>
-                  <SelectItem value="wallet">Digital Wallet</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {withdrawAmount && (
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <h4 className="font-medium text-blue-800 mb-2">Withdrawal Summary</h4>
-                <div className="space-y-1 text-sm text-blue-700">
-                  <div className="flex justify-between">
-                    <span>Points to withdraw:</span>
-                    <span>{withdrawAmount} points</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Conversion rate:</span>
-                    <span>1 point = ₹0.10</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Processing fee:</span>
-                    <span>₹5.00</span>
-                  </div>
-                  <hr className="my-2" />
-                  <div className="flex justify-between font-medium">
-                    <span>Amount to receive:</span>
-                    <span>₹{(Number(withdrawAmount) * 0.10 - 5).toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowWithdrawDialog(false)}>
-              Cancel
-            </Button>
+          <DialogFooter className="gap-2 sm:gap-0 pt-4 justify-center">
             <Button 
-              onClick={handleWithdraw}
-              disabled={!withdrawAmount || !withdrawMethod || Number(withdrawAmount) < 100}
+              onClick={() => setShowQRCode(false)} 
+              className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-full py-2 px-6"
             >
-              Withdraw Points
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Transfer Dialog */}
-      <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CreditCard className="w-5 h-5" />
-              Transfer Points
-            </DialogTitle>
-            <DialogDescription>
-              Transfer points to another collector or user
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="transferAmount">Transfer Amount</Label>
-              <Input
-                id="transferAmount"
-                type="number"
-                placeholder="Enter points to transfer"
-                value={transferAmount}
-                onChange={(e) => setTransferAmount(e.target.value)}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Available balance: {walletStats.currentBalance.toLocaleString()} points
-              </p>
-            </div>
-
-            <div>
-              <Label htmlFor="recipient">Recipient</Label>
-              <Input
-                id="recipient"
-                placeholder="Enter recipient's ID or phone number"
-                value={transferRecipient}
-                onChange={(e) => setTransferRecipient(e.target.value)}
-              />
-            </div>
-
-            {transferAmount && (
-              <div className="bg-green-50 p-3 rounded-lg">
-                <h4 className="font-medium text-green-800 mb-2">Transfer Summary</h4>
-                <div className="space-y-1 text-sm text-green-700">
-                  <div className="flex justify-between">
-                    <span>Points to transfer:</span>
-                    <span>{transferAmount} points</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Transfer fee:</span>
-                    <span>Free</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Recipient receives:</span>
-                    <span>{transferAmount} points</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowTransferDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleTransfer}
-              disabled={!transferAmount || !transferRecipient || Number(transferAmount) < 10}
-            >
-              Transfer Points
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

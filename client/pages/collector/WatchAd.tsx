@@ -1,457 +1,396 @@
-import React, { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ArrowLeft, Play, Pause, RotateCcw, Gift, Coins, Clock, Target, BarChart, Trophy, Video, Users, Zap } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, PlayCircle, X, Coins, Clock, TrendingUp, Video, Sparkles } from "lucide-react";
 
-interface Advertisement {
-  id: string;
-  title: string;
-  description: string;
-  duration: number;
-  pointsReward: number;
-  category: 'fuel' | 'equipment' | 'insurance' | 'training' | 'general';
-  advertiser: string;
-  thumbnailUrl: string;
-  available: boolean;
-  cooldownTime?: number;
-}
+export default function WatchAds() {
+  const LOCAL_WATCH_KEY = 'ads_watched_today_v1';
+  const [ads, setAds] = useState<any[]>([]);
+  const [currentAd, setCurrentAd] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [premiumLimit, setPremiumLimit] = useState<number>(5);
+  const [watchedToday, setWatchedToday] = useState<number>(0);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [currentAdIndex, setCurrentAdIndex] = useState<number | null>(null);
+  const [isPremium, setIsPremium] = useState<boolean>(false);
+  const [points, setPoints] = useState<number>(0);
 
-export default function CollectorWatchAd() {
-  const navigate = useNavigate();
-  const [watchedAds, setWatchedAds] = useState<string[]>([]);
-  const [currentAd, setCurrentAd] = useState<Advertisement | null>(null);
-  const [showAdPlayer, setShowAdPlayer] = useState(false);
-  const [adProgress, setAdProgress] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [showRewardDialog, setShowRewardDialog] = useState(false);
-  const [earnedPoints, setEarnedPoints] = useState(0);
-
-  const [advertisements] = useState<Advertisement[]>([
-    
-  ]);
-
-  const userStats = {
-    totalAdsWatched: 0,
-    totalPointsEarned: 0,
-    todayAdsWatched: 0,
-    todayPointsEarned: 0,
-    streak: 0,
-    averageDaily: 0
-  };
-
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'fuel': return '⛽';
-      case 'equipment': return '🛡️';
-      case 'insurance': return '🏥';
-      case 'training': return '📚';
-      case 'general': return '📱';
-      default: return '📺';
-    }
-  };
-
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'fuel': return 'bg-orange-100 text-orange-800';
-      case 'equipment': return 'bg-blue-100 text-blue-800';
-      case 'insurance': return 'bg-green-100 text-green-800';
-      case 'training': return 'bg-purple-100 text-purple-800';
-      case 'general': return 'bg-gray-100 text-gray-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const handleWatchAd = (ad: Advertisement) => {
-    setCurrentAd(ad);
-    setShowAdPlayer(true);
-    setAdProgress(0);
-    setIsPlaying(true);
-  };
-
-  const handleAdComplete = () => {
-    if (!currentAd) return;
-
-    setWatchedAds(prev => [...prev, currentAd.id]);
-    setEarnedPoints(currentAd.pointsReward);
-    setShowAdPlayer(false);
-    setShowRewardDialog(true);
-    setIsPlaying(false);
-    setAdProgress(0);
-  };
-
-  // Simulate ad progress
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying && currentAd && showAdPlayer) {
-      interval = setInterval(() => {
-        setAdProgress(prev => {
-          const newProgress = prev + (100 / currentAd.duration);
-          if (newProgress >= 100) {
-            handleAdComplete();
-            return 100;
-          }
-          return newProgress;
-        });
-      }, 1000);
+    loadAds();
+    loadUserAndLimit();
+  }, []);
+
+  async function loadAds() {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("advertisements")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setAds(data || []);
+    } catch (err) {
+      console.error("Error loading ads:", err);
+    } finally {
+      setLoading(false);
     }
-    return () => clearInterval(interval);
-  }, [isPlaying, currentAd, showAdPlayer]);
+  }
+
+  async function loadUserAndLimit() {
+    let uid: string | null = null;
+    try {
+      const { data } = await supabase.auth.getUser();
+      uid = data?.user?.id ?? null;
+    } catch {
+      const u = (supabase as any).auth?.user?.();
+      uid = u?.id ?? null;
+    }
+
+    if (uid) {
+      setUserId(uid);
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("is_premium, premium_until")
+          .eq("id", uid)
+          .single();
+        let premiumActive = false;
+        if (profile) {
+          if (profile.is_premium) premiumActive = true;
+          else if (profile.premium_until) premiumActive = new Date(profile.premium_until) > new Date();
+        }
+        setIsPremium(premiumActive);
+        setPremiumLimit(premiumActive ? 15 : 5);
+      } catch (err) {
+        console.error("Error fetching premium status:", err);
+      }
+
+      await fetchPoints(uid);
+    }
+
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const stored = localStorage.getItem(LOCAL_WATCH_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.date === todayKey) {
+          setWatchedToday(parsed.count ?? 0);
+        } else {
+          localStorage.setItem(LOCAL_WATCH_KEY, JSON.stringify({ date: todayKey, count: 0 }));
+          setWatchedToday(0);
+        }
+      } catch {
+        localStorage.setItem(LOCAL_WATCH_KEY, JSON.stringify({ date: todayKey, count: 0 }));
+        setWatchedToday(0);
+      }
+    } else {
+      localStorage.setItem(LOCAL_WATCH_KEY, JSON.stringify({ date: todayKey, count: 0 }));
+      setWatchedToday(0);
+    }
+  }
+
+  async function fetchPoints(uid: string) {
+    try {
+      const { data, error } = await supabase
+        .from("user_points")
+        .select("points")
+        .eq("user_id", uid)
+        .single();
+
+      if (error || !data) {
+        setPoints(0);
+        return;
+      }
+      setPoints(Number(data.points ?? 0));
+    } catch (err) {
+      console.error("Error fetching points:", err);
+    }
+  }
+
+  async function awardPoints(userId: string, pointsToAdd: number) {
+    try {
+      const { data, error } = await supabase.from("user_points").select("points").eq("user_id", userId).single();
+      if (error || !data) {
+        await supabase.from("user_points").insert({
+          user_id: userId,
+          points: pointsToAdd,
+          updated_at: new Date().toISOString(),
+        });
+      } else {
+        const currentPoints = Number(data.points ?? 0);
+        const nextPoints = currentPoints + pointsToAdd;
+        await supabase.from("user_points").update({
+          points: nextPoints,
+          updated_at: new Date().toISOString(),
+        }).eq("user_id", userId);
+      }
+      if (userId) await fetchPoints(userId);
+    } catch (err) {
+      console.error("Error awarding points:", err);
+    }
+  }
+
+  function getTodayKey(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function incrementTodayWatch(): number {
+    const key = getTodayKey();
+    const stored = localStorage.getItem(LOCAL_WATCH_KEY);
+    let current = 0;
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.date === key) current = parsed.count ?? 0;
+        else current = 0;
+      } catch {
+        current = 0;
+      }
+    }
+    const next = current + 1;
+    localStorage.setItem(LOCAL_WATCH_KEY, JSON.stringify({ date: key, count: next }));
+    setWatchedToday(next);
+    return next;
+  }
+
+  async function handleAdEnded() {
+    if (userId) await awardPoints(userId, 10);
+    incrementTodayWatch();
+
+    if (currentAdIndex !== null && ads && currentAdIndex + 1 < ads.length) {
+      const nextIndex = currentAdIndex + 1;
+      setCurrentAd(ads[nextIndex]);
+      setCurrentAdIndex(nextIndex);
+      return;
+    }
+
+    setCurrentAd(null);
+    setCurrentAdIndex(null);
+  }
+
+  const canWatchMore = () => watchedToday < premiumLimit;
+
+  const handleWatchClick = (ad: any, index: number) => {
+    if (!canWatchMore()) {
+      alert(`Daily limit reached. You can watch up to ${premiumLimit} ads today${premiumLimit > 5 ? ' with Premium' : ''}.`);
+      return;
+    }
+    setCurrentAd(ad);
+    setCurrentAdIndex(index);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 pb-20">
       {/* Header */}
-      <div className="bg-purple-600 text-white p-4 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => navigate(-1)}
-            className="p-2 text-white hover:bg-white/20"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex-1">
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <Video className="w-6 h-6" />
-              Watch Ads & Earn
-            </h1>
-            <p className="text-sm opacity-90">Earn points by watching targeted advertisements</p>
+      <div className="bg-gradient-to-r from-blue-700 to-cyan-600 text-white">
+        <div className="max-w-6xl mx-auto p-6">
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
+                <Video className="w-6 h-6" />
+                Watch & Earn
+              </h1>
+              <p className="text-blue-100 mt-1">Earn points by watching ads</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Stats Overview */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                  <Video className="w-5 h-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{userStats.totalAdsWatched}</p>
-                  <p className="text-xs text-gray-500">Total Watched</p>
-                </div>
+      <div className="max-w-6xl mx-auto p-4 space-y-6">
+        {/* Stats Banner */}
+        <Card className="border-0 shadow-xl rounded-3xl overflow-hidden bg-white">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-6 h-6 text-blue-600" />
+                <h2 className="text-xl font-bold text-gray-800">Your Points</h2>
               </div>
-            </CardContent>
-          </Card>
+              <div className="bg-blue-100 rounded-full px-4 py-2 shadow-sm">
+                <span className="font-bold text-blue-600 text-lg">{points}</span>
+                <span className="text-blue-500 text-sm ml-1">pts</span>
+              </div>
+            </div>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-600">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-                  <Coins className="w-5 h-5 text-yellow-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{userStats.totalPointsEarned}</p>
-                  <p className="text-xs text-gray-500">Points Earned</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card className="border-0 shadow-md rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-blue-600" />
+                    <span className="font-medium text-gray-700">Available</span>
+                  </div>
+                  <p className="text-2xl font-bold text-gray-800 mt-2">{ads.length}</p>
+                </CardContent>
+              </Card>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Target className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{userStats.todayAdsWatched}</p>
-                  <p className="text-xs text-gray-500">Today Watched</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              <Card className="border-0 shadow-md rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-blue-600" />
+                    <span className="font-medium text-gray-700">Avg. Duration</span>
+                  </div>
+                  <p className="text-2xl font-bold text-gray-800 mt-2">~30s</p>
+                </CardContent>
+              </Card>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-800">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                  <Gift className="w-5 h-5 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{userStats.todayPointsEarned}</p>
-                  <p className="text-xs text-gray-500">Today Points</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              <Card className="border-0 shadow-md rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-blue-600" />
+                    <span className="font-medium text-gray-700">{isPremium ? 'Premium' : 'Daily'} Limit</span>
+                  </div>
+                  <p className="text-2xl font-bold text-gray-800 mt-2">{premiumLimit}</p>
+                </CardContent>
+              </Card>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-900">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                  <Trophy className="w-5 h-5 text-orange-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{userStats.streak}</p>
-                  <p className="text-xs text-gray-500">Day Streak</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              <Card className="border-0 shadow-md rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <PlayCircle className="w-5 h-5 text-blue-600" />
+                    <span className="font-medium text-gray-700">Watched Today</span>
+                  </div>
+                  <p className="text-2xl font-bold text-gray-800 mt-2">{watchedToday}</p>
+                </CardContent>
+              </Card>
+            </div>
 
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1000">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
-                  <BarChart className="w-5 h-5 text-indigo-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{userStats.averageDaily}</p>
-                  <p className="text-xs text-gray-500">Daily Average</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Daily Challenge */}
-        <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200 animate-in fade-in-50 slide-in-from-bottom-4 duration-600">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                <Target className="w-6 h-6 text-purple-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-semibold text-purple-800">Daily Challenge</h3>
-                <p className="text-sm text-purple-600">Watch 3 more ads to complete today's challenge</p>
-                <div className="w-full bg-purple-200 rounded-full h-2 mt-2">
-                  <div className="bg-purple-600 h-2 rounded-full" style={{ width: '67%' }} />
-                </div>
-              </div>
-              <Badge className="bg-purple-100 text-purple-800">
-                2/3 Complete
-              </Badge>
+            <div className="mt-4 text-sm text-gray-600">
+              Daily limit: {premiumLimit} • Watched today: {watchedToday}
             </div>
           </CardContent>
         </Card>
 
-        {/* Available Advertisements */}
-        <div className="space-y-4">
-          <h2 className="text-lg font-bold">Available Advertisements</h2>
-          
-          {advertisements.map((ad, index) => (
-            <Card key={ad.id} className={`hover:shadow-lg transition-all duration-300 animate-in fade-in-50 slide-in-from-bottom-4 delay-${(index + 1) * 100} ${!ad.available ? 'opacity-60' : ''}`}>
-              <CardContent className="p-4">
-                <div className="flex gap-4">
-                  {/* Thumbnail */}
-                  <div className="w-24 h-24 bg-gray-200 rounded-lg flex-shrink-0 relative">
-                    <img 
-                      src={ad.thumbnailUrl} 
-                      alt={ad.title}
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                    <div className="absolute inset-0 bg-black/20 rounded-lg flex items-center justify-center">
-                      <Play className="w-8 h-8 text-white" />
-                    </div>
-                    <Badge 
-                      className={`absolute top-2 left-2 text-xs ${getCategoryColor(ad.category)}`}
-                    >
-                      {getCategoryIcon(ad.category)} {ad.category}
-                    </Badge>
+        {/* Ads List */}
+        <Card className="border-0 shadow-xl rounded-3xl overflow-hidden bg-white">
+          <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 border-b border-blue-100">
+            <CardTitle className="text-gray-800 flex items-center gap-2">
+              <div className="bg-blue-100 rounded-full p-1">
+                <PlayCircle className="w-5 h-5 text-blue-700" />
+              </div>
+              Available Ads
+              {!loading && ads.length > 0 && (
+                <Badge className="ml-auto bg-blue-100 text-blue-700 border-0">
+                  {ads.length} ads
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-4">
+                <div className="relative">
+                  <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
                   </div>
-
-                  {/* Ad Details */}
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h3 className="font-semibold">{ad.title}</h3>
-                        <p className="text-sm text-gray-600 mt-1">{ad.description}</p>
-                        <p className="text-xs text-gray-500 mt-2">by {ad.advertiser}</p>
-                      </div>
-                      
-                      <div className="text-right">
-                        <Badge className="bg-yellow-100 text-yellow-800 mb-2">
-                          <Coins className="w-3 h-3 mr-1" />
-                          +{ad.pointsReward} points
-                        </Badge>
-                        <div className="text-xs text-gray-500">
-                          <Clock className="w-3 h-3 inline mr-1" />
-                          {ad.duration}s
+                </div>
+                <p className="text-gray-500 font-medium">Loading ads...</p>
+              </div>
+            ) : ads.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-4">
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center">
+                  <Video className="w-10 h-10 text-gray-400" />
+                </div>
+                <div className="text-center">
+                  <p className="text-gray-600 font-medium">No ads available</p>
+                  <p className="text-gray-400 text-sm mt-1">Check back later for new content</p>
+                </div>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {ads.map((ad, index) => (
+                  <div key={ad.id} className="group p-4 hover:bg-blue-50 transition-all duration-200 cursor-pointer">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          <div className="w-14 h-14 bg-gradient-to-br from-blue-100 to-cyan-100 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
+                            <Video className="w-7 h-7 text-blue-600" />
+                          </div>
+                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center pt-3 border-t">
-                      <div className="text-xs text-gray-500">
-                        Category: {ad.category} | Duration: {ad.duration} seconds
-                      </div>
-                      
-                      {ad.available ? (
-                        <Button
-                          onClick={() => handleWatchAd(ad)}
-                          className="bg-purple-600 hover:bg-purple-700"
-                        >
-                          <Play className="w-4 h-4 mr-2" />
-                          Watch Ad
-                        </Button>
-                      ) : (
-                        <div className="text-center">
-                          <Badge variant="outline" className="text-gray-500">
-                            <Clock className="w-3 h-3 mr-1" />
-                            Cooldown Active
-                          </Badge>
-                          <div className="text-xs text-gray-400 mt-1">
-                            Available in 2h 30m
+                        <div>
+                          <h3 className="font-semibold text-gray-800 group-hover:text-blue-700 transition-colors">
+                            {ad.title}
+                          </h3>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-xs text-gray-500 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              30 sec
+                            </span>
+                            <span className="text-xs text-blue-600 font-medium flex items-center gap-1">
+                              <Coins className="w-3 h-3" />
+                              +10 points
+                            </span>
                           </div>
                         </div>
-                      )}
+                      </div>
+                      <Button
+                        onClick={() => handleWatchClick(ad, index)}
+                        className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white shadow-md group-hover:shadow-lg transition-all"
+                        disabled={watchedToday >= premiumLimit}
+                      >
+                        <PlayCircle className="w-4 h-4 mr-2" />
+                        {watchedToday >= premiumLimit ? 'Limit reached' : 'Watch'}
+                      </Button>
                     </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Current Ad Player */}
+        {currentAd && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="w-full max-w-4xl border-0 shadow-2xl rounded-3xl overflow-hidden">
+              <CardHeader className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white relative">
+                <Button
+                  onClick={() => {
+                    setCurrentAd(null);
+                    setCurrentAdIndex(null);
+                  }}
+                  className="absolute right-4 top-4 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-full p-2 h-auto"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+                <CardTitle className="text-xl flex items-center gap-2">
+                  <Video className="w-6 h-6" />
+                  {currentAd.title}
+                </CardTitle>
+                <p className="text-blue-100 text-sm mt-1">Watch to earn 10 points</p>
+              </CardHeader>
+              <CardContent className="p-0 bg-black">
+                <video
+                  src={currentAd.video_url}
+                  controls
+                  autoPlay
+                  onEnded={handleAdEnded}
+                  className="w-full"
+                  style={{ maxHeight: "60vh" }}
+                />
+                <div className="bg-white p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-blue-600">
+                    <Coins className="w-5 h-5" />
+                    <span className="font-semibold">10 points earned on completion</span>
+                  </div>
+                  <Button
+                    onClick={() => {
+                      setCurrentAd(null);
+                      setCurrentAdIndex(null);
+                    }}
+                    variant="outline"
+                    className="border-blue-200 text-blue-700 hover:bg-blue-50"
+                  >
+                    Close
+                  </Button>
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
-
-        {/* How It Works */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1200">
-          <CardHeader>
-            <CardTitle>How It Works</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="text-center">
-                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <Video className="w-6 h-6 text-blue-600" />
-                </div>
-                <h4 className="font-semibold mb-2">Watch Ads</h4>
-                <p className="text-sm text-gray-600">Choose from targeted advertisements relevant to collectors</p>
-              </div>
-              <div className="text-center">
-                <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <Coins className="w-6 h-6 text-green-600" />
-                </div>
-                <h4 className="font-semibold mb-2">Earn Points</h4>
-                <p className="text-sm text-gray-600">Get rewarded with points for each ad you watch completely</p>
-              </div>
-              <div className="text-center">
-                <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <Gift className="w-6 h-6 text-purple-600" />
-                </div>
-                <h4 className="font-semibold mb-2">Redeem Rewards</h4>
-                <p className="text-sm text-gray-600">Use your points to get discounts on equipment and services</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Ad Player Dialog */}
-      <Dialog open={showAdPlayer} onOpenChange={setShowAdPlayer}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Video className="w-5 h-5" />
-              {currentAd?.title}
-            </DialogTitle>
-            <DialogDescription>
-              Watch the complete ad to earn {currentAd?.pointsReward} points
-            </DialogDescription>
-          </DialogHeader>
-          
-          {currentAd && (
-            <div className="space-y-4">
-              {/* Video Player Simulation */}
-              <div className="aspect-video bg-black rounded-lg flex items-center justify-center relative">
-                <div className="text-white text-center">
-                  <Video className="w-16 h-16 mx-auto mb-4" />
-                  <p className="text-lg font-semibold">{currentAd.title}</p>
-                  <p className="text-sm opacity-75">{currentAd.description}</p>
-                </div>
-                
-                {/* Progress Bar */}
-                <div className="absolute bottom-4 left-4 right-4">
-                  <div className="w-full bg-gray-600 rounded-full h-1">
-                    <div 
-                      className="bg-white h-1 rounded-full transition-all duration-1000"
-                      style={{ width: `${adProgress}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between items-center mt-2 text-white text-xs">
-                    <span>{Math.floor((adProgress / 100) * currentAd.duration)}s</span>
-                    <span>{currentAd.duration}s</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Controls */}
-              <div className="flex justify-center gap-4">
-                <Button
-                  variant="outline"
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  disabled={adProgress >= 100}
-                >
-                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </Button>
-              </div>
-
-              {/* Ad Info */}
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="font-medium">Points to Earn:</p>
-                    <p className="text-sm text-gray-600">by {currentAd.advertiser}</p>
-                  </div>
-                  <Badge className="bg-yellow-100 text-yellow-800">
-                    <Coins className="w-4 h-4 mr-1" />
-                    +{currentAd.pointsReward} points
-                  </Badge>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAdPlayer(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Reward Dialog */}
-      <Dialog open={showRewardDialog} onOpenChange={setShowRewardDialog}>
-        <DialogContent className="max-w-md text-center">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-center gap-2 text-xl">
-              <Gift className="w-6 h-6 text-yellow-500" />
-              Congratulations!
-            </DialogTitle>
-            <DialogDescription className="text-base mt-4">
-              You've successfully watched the advertisement and earned points!
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="my-6">
-            <div className="w-24 h-24 bg-yellow-100 rounded-full mx-auto flex items-center justify-center mb-4">
-              <Coins className="w-12 h-12 text-yellow-600" />
-            </div>
-            <div className="text-3xl font-bold text-yellow-600 mb-2">
-              +{earnedPoints} Points
-            </div>
-            <p className="text-sm text-gray-600">
-              Points have been added to your wallet
-            </p>
           </div>
-          
-          <DialogFooter className="justify-center">
-            <Button 
-              onClick={() => setShowRewardDialog(false)}
-              className="bg-yellow-500 hover:bg-yellow-600 px-8"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              Awesome!
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        )}
+      </div>
     </div>
   );
 }

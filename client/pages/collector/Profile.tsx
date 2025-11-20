@@ -4,201 +4,192 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { ArrowLeft, User, Edit, Save, Lock, QrCode, Camera, MapPin, Phone, Mail, Calendar, Truck, Award, Target, BarChart, Trophy, Star, Settings, LogOut } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { 
+  ArrowLeft, Edit, Save, Camera, MapPin, Phone, Mail, LogOut, 
+  Briefcase, Shield, HelpCircle, Lock, User, ExternalLink 
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { updateUserProfile, uploadAvatar, getUserProfile } from '../../lib/profileService';
 
 export default function CollectorProfile() {
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
-  const [showQRDialog, setShowQRDialog] = useState(false);
-  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
-  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
-  const [showPrivacyDialog, setShowPrivacyDialog] = useState(false);
-  const [showShiftDialog, setShowShiftDialog] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
   const [profileData, setProfileData] = useState({
     name: '',
     email: '',
     phone: '',
+    emergency_contact: '',
     address: '',
-    licenseNumber: 'WC2024001',
+    licenseNumber: '',
     vehicleNumber: '',
     experience: '',
-    specialization: 'Mixed Waste Collection',
-    emergencyContact: '',
-    avatar: '/placeholder.svg',
+    specialization: '',
+    avatar_url: '/placeholder.svg',
     bio: '',
-    zone: 'Mumbai Central',
+    zone: 'Ahmedabad Central',
     shift: 'Morning (6 AM - 2 PM)'
   });
   
-  // Load user data when component mounts
   useEffect(() => {
     async function loadUserData() {
       try {
         setLoading(true);
-        
-        // Get current user
         const { data: { user } } = await supabase.auth.getUser();
-        
         if (!user) {
           navigate('/login', { replace: true });
           return;
         }
         
-        // Get user profile from profiles table
+        setUserId(user.id);
+        
         const { data: profile, error } = await supabase
-          .from('collector_profiles')
-          .select('*')
+          .from('profiles')
+          .select(`
+            *,
+            collector_details (
+              *
+            )
+          `)
           .eq('id', user.id)
           .single();
           
-        // Handle case where profiles table might not exist yet
-        if (error) {
-          console.error('Error fetching profile:', error);
-          // Still set user data from auth metadata if available
-          if (error.code !== 'PGRST116') {
-            setProfileData(prev => ({
-              ...prev,
-              name: user.user_metadata?.name || '',
-              email: user.email || '',
-              phone: user.user_metadata?.phone || '',
-              joinedDate: new Date().toISOString().split('T')[0]
-            }));
-          }
-          return;
-        }
+        if (error && error.code !== 'PGRST116') throw error;
         
-        // Update profile data with user information
-        setProfileData(prev => ({
-          ...prev,
-          name: profile?.name || user.user_metadata?.name || '',
-          email: user.email || '',
-          phone: profile?.phone || user.user_metadata?.phone || '',
-          address: profile?.address || '',
-          vehicleNumber: profile?.vehicle_number || '',
-          experience: profile?.experience || '',
-          emergencyContact: profile?.emergency_contact || '',
-          bio: profile?.bio || '',
-          zone: profile?.zone || 'Mumbai Central',
-          shift: profile?.shift || 'Morning (6 AM - 2 PM)'
-        }));
+        if (profile) {
+          const collectorDetails = profile.collector_details || {};
+            
+          setProfileData({
+            name: profile.full_name || '',
+            email: user.email || profile.email || '',
+            phone: profile.phone_number || '',
+            emergency_contact: collectorDetails.emergency_contact || '',
+            address: profile.address || '',
+            licenseNumber: collectorDetails.license_number || '',
+            vehicleNumber: collectorDetails.vehicle_number || '',
+            experience: collectorDetails.experience || '',
+            specialization: collectorDetails.specialization || '',
+            bio: collectorDetails.bio || '',
+            zone: collectorDetails.zone || 'Ahmedabad Central',
+            shift: collectorDetails.shift || 'Morning (6 AM - 2 PM)',
+            avatar_url: profile.avatar_url || '/placeholder.svg'
+          });
+        } else {
+          setProfileData(prev => ({ ...prev, email: user.email || '' }));
+        }
       } catch (error) {
         console.error('Error loading user data:', error);
       } finally {
         setLoading(false);
       }
     }
-    
     loadUserData();
   }, [navigate]);
 
-  const collectorStats = {
-    totalCollections: 0,
-    totalWeight: 0,
-    pointsEarned: 0,
-    efficiency: 0,
-    rating: 0,
-    streak: 0,
-    rank: 'broonze Collector',
-    level: 1,
-    nextLevelPoints: 0,
-    achievements: 0,
-    referrals: 0
+  const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0];
+      setAvatarFile(file);
+      const previewUrl = URL.createObjectURL(file);
+      setProfileData(prev => ({ ...prev, avatar_url: previewUrl }));
+    }
   };
 
-  const achievements = [
-    { id: 1, name: 'Eco Warrior', description: '1000+ collections completed', icon: '🌱', earned: true },
-    { id: 2, name: 'Efficiency Master', description: 'Maintained 90%+ efficiency for 30 days', icon: '⚡', earned: true },
-    { id: 3, name: 'Team Player', description: 'Successfully referred 3+ collectors', icon: '👥', earned: true },
-    { id: 4, name: 'Streak Champion', description: '2 weeks consecutive collections', icon: '🔥', earned: true },
-    { id: 5, name: 'Route Optimizer', description: 'Complete route under estimated time 50 times', icon: '📍', earned: false },
-    { id: 6, name: 'Point Master', description: 'Earn 50,000 total points', icon: '💎', earned: false }
-  ];
-
-  const recentActivity = [
-    
-  ];
-
   const handleSaveProfile = async () => {
-    try {
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
+    if (!userId) {
+      alert('User not found. Please log in again.');
+      return;
+    }
+    setLoading(true);
+
+    let newAvatarUrl = profileData.avatar_url;
+
+    if (avatarFile) {
+      const fileExt = avatarFile.name.split('.').pop();
+      const fileName = `${userId}/${Date.now()}.${fileExt}`;
       
-      if (!user) {
-        alert('You must be logged in to update your profile');
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, avatarFile, { upsert: true });
+
+      if (uploadError) {
+        alert(`Failed to upload avatar: ${uploadError.message}`);
+        setLoading(false);
         return;
       }
       
-      // Try to update profile in Supabase
-      const { error } = await supabase
-        .from('collector_profiles')
-        .update({
-          name: profileData.name,
-          phone: profileData.phone,
-          address: profileData.address,
-          vehicle_number: profileData.vehicleNumber,
-          emergency_contact: profileData.emergencyContact,
-          bio: profileData.bio,
-          zone: profileData.zone,
-          shift: profileData.shift,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user.id);
-        
-      // If there's an error with the collector_profiles table, try to create it
-      if (error) {
-        console.log('Error updating profile, attempting to create profile:', error);
-        
-        // Try to insert a new profile
-        const { error: insertError } = await supabase
-          .from('collector_profiles')
-          .insert([{ 
-            id: user.id,
-            name: profileData.name,
-            phone: profileData.phone,
-            address: profileData.address,
-            vehicle_number: profileData.vehicleNumber,
-            emergency_contact: profileData.emergencyContact,
-            bio: profileData.bio,
-            zone: profileData.zone,
-            shift: profileData.shift,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }]);
-        
-        if (insertError) {
-          console.error('Error creating profile:', insertError);
-          alert('Failed to update profile. Please try again.');
-          return;
-        }
-      }
-      
-      // Update user metadata
-      const { error: metadataError } = await supabase.auth.updateUser({
-        data: {
-          name: profileData.name,
-          phone: profileData.phone
-        }
-      });
-      
-      if (metadataError) {
-        console.error('Error updating user metadata:', metadataError);
-      }
-      
+      const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
+      newAvatarUrl = data.publicUrl;
+    }
+
+    const profileUpdates = {
+      id: userId,
+      full_name: profileData.name,
+      phone_number: profileData.phone,
+      address: profileData.address,
+      avatar_url: newAvatarUrl,
+      email: profileData.email,
+      updated_at: new Date().toISOString(),
+    };
+
+    const collectorUpdates = {
+      id: userId,
+      emergency_contact: profileData.emergency_contact,
+      license_number: profileData.licenseNumber,
+      vehicle_number: profileData.vehicleNumber,
+      experience: profileData.experience,
+      specialization: profileData.specialization,
+      bio: profileData.bio,
+      zone: profileData.zone,
+      shift: profileData.shift,
+    };
+
+    try {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert(profileUpdates);
+
+      if (profileError) throw profileError;
+
+      const { error: collectorError } = await supabase
+        .from('collector_details')
+        .upsert(collectorUpdates);
+
+      if (collectorError) throw collectorError;
+
       alert('Profile updated successfully!');
-      console.log('Saving profile:', profileData);
+      setProfileData(prev => ({ ...prev, avatar_url: newAvatarUrl }));
+      setAvatarFile(null);
       setIsEditing(false);
-    } catch (error) {
-      console.error('Error updating profile:', error);
-      alert('An unexpected error occurred. Please try again.');
+
+    } catch (error: any) {
+      alert(`Failed to update profile: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.email) {
+      const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
+        redirectTo: `${window.location.origin}/update-password`,
+      });
+      if (error) {
+        alert(`Error sending reset email: ${error.message}`);
+      } else {
+        alert('A password reset link has been sent to your email.');
+      }
+    } else {
+      alert('Could not find your email to send a reset link.');
     }
   };
 
@@ -207,650 +198,442 @@ export default function CollectorProfile() {
     navigate('/login', { replace: true });
   };
 
-  const getUserQRCode = () => {
-    return `COLLECTOR_${profileData.licenseNumber}_${Date.now()}`;
-  };
-
-  const handleChangePassword = () => {
-    setShowPasswordDialog(true);
-  };
-
-  const handlePrivacySettings = () => {
-    setShowPrivacyDialog(true);
-  };
-
-  const handleShiftPreferences = () => {
-    setShowShiftDialog(true);
-  };
-
-  const handleMyQRCode = () => {
-    setShowQRDialog(true);
-  };
-
-  const handlePasswordSubmit = () => {
-    alert('Password changed successfully!');
-    setShowPasswordDialog(false);
-  };
-
-  const handlePrivacySubmit = () => {
-    alert('Privacy settings updated successfully!');
-    setShowPrivacyDialog(false);
-  };
-
-  const handleShiftSubmit = () => {
-    alert('Shift preferences updated successfully!');
-    setShowShiftDialog(false);
-  };
-
-  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files) return;
-    const file = event.target.files[0];
-    
-    try {
-      const result = await uploadAvatar(file);
-      
-      if (result.success && result.url) {
-        setProfileData(prev => ({ ...prev, avatar: result.url }));
-        console.log('✅ Collector avatar uploaded successfully');
-      } else {
-        console.error('❌ Collector avatar upload failed:', result.error);
-        alert(`Failed to upload avatar: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('❌ Collector avatar upload error:', error);
-      alert('Failed to upload avatar. Please try again.');
-    }
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 pb-20">
       {/* Header */}
-      <div className="bg-blue-600 text-white p-4 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="sm" 
+      <div className="bg-gradient-to-r from-blue-700 to-cyan-600 text-white p-6 shadow-lg">
+        <div className="flex items-center gap-4 max-w-5xl mx-auto">
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => navigate(-1)}
-            className="p-2 text-white hover:bg-white/20"
+            className="p-2 text-white hover:bg-white/20 transition-colors duration-200"
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
-          <div className="flex-1">
-            <h1 className="text-xl font-bold">Collector Profile</h1>
-            <p className="text-sm opacity-90">Manage your profile and view performance</p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowQRDialog(true)}
-              className="text-white hover:bg-white/20"
-            >
-              <QrCode className="w-5 h-5" />
-            </Button>
-            <Button
-              onClick={() => setIsEditing(!isEditing)}
-              variant="ghost"
-              size="sm"
-              className="text-white hover:bg-white/20"
-            >
-              {isEditing ? <Save className="w-4 h-4" /> : <Edit className="w-4 h-4" />}
-            </Button>
-          </div>
+          <h1 className="text-2xl font-bold tracking-tight">Collector Profile</h1>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Profile Overview */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
-          <CardContent className="p-6">
-            <div className="flex items-start gap-6">
-              <div className="relative">
-                <Avatar className="w-24 h-24">
-                  <AvatarImage src={profileData.avatar} alt={profileData.name} />
-                  <AvatarFallback className="text-2xl font-bold bg-blue-100 text-blue-600">
-                    {profileData.name.split(' ').map(n => n[0]).join('')}
-                  </AvatarFallback>
-                </Avatar>
-                {isEditing && (
-                  <Button
-                    size="sm"
-                    className="absolute -bottom-2 -right-2 rounded-full w-8 h-8 p-0"
-                  >
-                    <Camera className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-              
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <h2 className="text-2xl font-bold">{profileData.name}</h2>
-                  <Badge className="bg-yellow-100 text-yellow-800">
-                    <Trophy className="w-3 h-3 mr-1" />
-                    {collectorStats.rank}
-                  </Badge>
-                  <Badge variant="outline">
-                    Level {collectorStats.level}
-                  </Badge>
-                </div>
-                
-                <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
-                  <span className="flex items-center gap-1">
-                    <Mail className="w-4 h-4" />
-                    {profileData.email}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Phone className="w-4 h-4" />
-                    {profileData.phone}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-4 h-4" />
-                    {profileData.zone}
-                  </span>
-                </div>
-                
-                <p className="text-gray-600 mb-4">{profileData.bio}</p>
-                
-                <div className="flex items-center gap-6">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600">{collectorStats.totalCollections}</div>
-                    <div className="text-xs text-gray-500">Collections</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">{collectorStats.efficiency}%</div>
-                    <div className="text-xs text-gray-500">Efficiency</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-yellow-600 flex items-center gap-1">
-                      {collectorStats.rating}
-                      <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                    </div>
-                    <div className="text-xs text-gray-500">Rating</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-purple-600">{collectorStats.pointsEarned.toLocaleString()}</div>
-                    <div className="text-xs text-gray-500">Points</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="max-w-5xl mx-auto p-6">
+        <Tabs defaultValue="profile" className="space-y-8">
+          {/* Tab List */}
+          <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-md rounded-2xl p-2 shadow-lg border border-gray-100">
+            <TabsTrigger
+              value="profile"
+              className="flex items-center gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-200 rounded-xl py-3 px-4 font-medium"
+            >
+              <User className="w-5 h-5" /> Profile
+            </TabsTrigger>
+            <TabsTrigger
+              value="security"
+              className="flex items-center gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-200 rounded-xl py-3 px-4 font-medium"
+            >
+              <Shield className="w-5 h-5" /> Security
+            </TabsTrigger>
+            <TabsTrigger
+              value="support"
+              className="flex items-center gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-200 rounded-xl py-3 px-4 font-medium"
+            >
+              <HelpCircle className="w-5 h-5" /> Support
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Performance Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-600">
-            <CardContent className="p-4 text-center">
-              <Truck className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{collectorStats.totalWeight.toLocaleString()}</div>
-              <div className="text-xs text-gray-500">KG Collected</div>
-            </CardContent>
-          </Card>
-          
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-            <CardContent className="p-4 text-center">
-              <Target className="w-8 h-8 text-green-600 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{collectorStats.streak}</div>
-              <div className="text-xs text-gray-500">Day Streak</div>
-            </CardContent>
-          </Card>
-          
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-800">
-            <CardContent className="p-4 text-center">
-              <Award className="w-8 h-8 text-purple-600 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{collectorStats.achievements}</div>
-              <div className="text-xs text-gray-500">Achievements</div>
-            </CardContent>
-          </Card>
-          
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-900">
-            <CardContent className="p-4 text-center">
-              <BarChart className="w-8 h-8 text-orange-600 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{collectorStats.referrals}</div>
-              <div className="text-xs text-gray-500">Referrals</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Profile Information */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1000">
-          <CardHeader>
-            <CardTitle>Personal Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="name">Full Name</Label>
-                {isEditing ? (
-                  <Input
-                    id="name"
-                    value={profileData.name}
-                    onChange={(e) => setProfileData({...profileData, name: e.target.value})}
-                  />
-                ) : (
-                  <p className="font-medium">{profileData.name}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="license">License Number</Label>
-                <p className="font-medium">{profileData.licenseNumber}</p>
-              </div>
-              
-              <div>
-                <Label htmlFor="email">Email</Label>
-                {isEditing ? (
-                  <Input
-                    id="email"
-                    type="email"
-                    value={profileData.email}
-                    onChange={(e) => setProfileData({...profileData, email: e.target.value})}
-                  />
-                ) : (
-                  <p className="font-medium">{profileData.email}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="phone">Phone</Label>
-                {isEditing ? (
-                  <Input
-                    id="phone"
-                    value={profileData.phone}
-                    onChange={(e) => setProfileData({...profileData, phone: e.target.value})}
-                  />
-                ) : (
-                  <p className="font-medium">{profileData.phone}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="vehicle">Vehicle Number</Label>
-                {isEditing ? (
-                  <Input
-                    id="vehicle"
-                    value={profileData.vehicleNumber}
-                    onChange={(e) => setProfileData({...profileData, vehicleNumber: e.target.value})}
-                  />
-                ) : (
-                  <p className="font-medium">{profileData.vehicleNumber}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="zone">Collection Zone</Label>
-                {isEditing ? (
-                  <Select value={profileData.zone} onValueChange={(value) => setProfileData({...profileData, zone: value})}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Mumbai Central">Mumbai Central</SelectItem>
-                      <SelectItem value="Mumbai East">Mumbai East</SelectItem>
-                      <SelectItem value="Mumbai West">Mumbai West</SelectItem>
-                      <SelectItem value="Mumbai North">Mumbai North</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="font-medium">{profileData.zone}</p>
-                )}
-              </div>
-            </div>
-            
-            <div>
-              <Label htmlFor="address">Address</Label>
-              {isEditing ? (
-                <Textarea
-                  id="address"
-                  value={profileData.address}
-                  onChange={(e) => setProfileData({...profileData, address: e.target.value})}
-                  rows={2}
-                />
-              ) : (
-                <p className="font-medium">{profileData.address}</p>
-              )}
-            </div>
-            
-            <div>
-              <Label htmlFor="bio">Bio</Label>
-              {isEditing ? (
-                <Textarea
-                  id="bio"
-                  value={profileData.bio}
-                  onChange={(e) => setProfileData({...profileData, bio: e.target.value})}
-                  rows={3}
-                />
-              ) : (
-                <p className="font-medium">{profileData.bio}</p>
-              )}
-            </div>
-            
-            {isEditing && (
-              <div className="flex gap-3 pt-4">
-                <Button onClick={handleSaveProfile} className="bg-primary hover:bg-primary/90">
-                  <Save className="w-4 h-4 mr-2" />
-                  Save Changes
-                </Button>
-                <Button variant="outline" onClick={() => setIsEditing(false)}>
-                  Cancel
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Achievements */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1100">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Award className="w-5 h-5" />
-              Achievements
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {achievements.map((achievement) => (
-                <div key={achievement.id} className={`flex items-center gap-4 p-4 rounded-lg border ${
-                  achievement.earned ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'
-                }`}>
-                  <div className="text-3xl">{achievement.icon}</div>
-                  <div className="flex-1">
-                    <h4 className={`font-semibold ${achievement.earned ? 'text-green-800' : 'text-gray-600'}`}>
-                      {achievement.name}
-                    </h4>
-                    <p className={`text-sm ${achievement.earned ? 'text-green-600' : 'text-gray-500'}`}>
-                      {achievement.description}
-                    </p>
-                  </div>
-                  {achievement.earned && (
-                    <Badge className="bg-green-100 text-green-800">
-                      Earned
-                    </Badge>
+          {/* Profile Tab */}
+          <TabsContent value="profile" className="space-y-8">
+            {/* Hero Avatar Card */}
+            <Card className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-3xl shadow-2xl border-0 overflow-hidden">
+              <CardContent className="p-8 flex flex-col md:flex-row items-center md:items-start gap-8">
+                <div className="relative group">
+                  <Avatar className="w-32 h-32 border-4 border-white/40 shadow-2xl transition-transform duration-300 group-hover:scale-105">
+                    <AvatarImage src={profileData.avatar_url} alt="Profile" className="object-cover" />
+                    <AvatarFallback className="text-2xl bg-blue-700 text-white font-bold">
+                      {profileData.name?.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {isEditing && (
+                    <label htmlFor="avatar-upload" className="absolute bottom-0 right-0 cursor-pointer">
+                      <div className="rounded-full w-12 h-12 p-2 bg-white/20 backdrop-blur-sm text-white hover:bg-white/30 flex items-center justify-center transition-all duration-200 shadow-lg border border-white/30">
+                        <Camera className="w-5 h-5" />
+                        <Input id="avatar-upload" type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                      </div>
+                    </label>
                   )}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Recent Activity */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1200">
-          <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {recentActivity.map((activity, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div>
-                    <p className="font-medium text-sm">{activity.activity}</p>
-                    <p className="text-xs text-gray-500">{activity.date}</p>
-                  </div>
-                  <Badge className="bg-green-100 text-green-800">
-                    +{activity.points} pts
-                  </Badge>
+                <div className="flex-1 text-center md:text-left">
+                  <h2 className="text-3xl font-bold mb-2">{profileData.name || 'Unnamed Collector'}</h2>
+                  <p className="text-blue-100 text-lg flex items-center gap-2">
+                    <Mail className="w-5 h-5" /> {profileData.email}
+                  </p>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        {/* Settings & Actions */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-1300">
-          <CardHeader>
-            <CardTitle>Settings & Actions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Button
-                variant="outline"
-                className="justify-start"
-                onClick={handleChangePassword}
-              >
-                <Lock className="w-4 h-4 mr-2" />
-                Change Password
-              </Button>
-              <Button
-                variant="outline"
-                className="justify-start"
-                onClick={handlePrivacySettings}
-              >
-                <Settings className="w-4 h-4 mr-2" />
-                Privacy Settings
-              </Button>
-              <Button
-                variant="outline"
-                className="justify-start"
-                onClick={handleShiftPreferences}
-              >
-                <Calendar className="w-4 h-4 mr-2" />
-                Shift Preferences
-              </Button>
-              <Button
-                variant="outline"
-                className="justify-start"
-                onClick={handleMyQRCode}
-              >
-                <QrCode className="w-4 h-4 mr-2" />
-                My QR Code
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Logout */}
-        <Card className="border-red-200 animate-in fade-in-50 slide-in-from-bottom-4 duration-1400">
-          <CardContent className="p-4">
-            <Dialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-              <DialogTrigger asChild>
-                <Button variant="outline" className="w-full text-red-600 border-red-200 hover:bg-red-50">
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Logout
+            {/* Main Profile Card */}
+            <Card className="rounded-3xl shadow-xl border border-gray-100 bg-white">
+              <CardHeader className="flex flex-row items-center justify-between pb-6">
+                <CardTitle className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                  <Briefcase className="w-6 h-6 text-blue-600" />
+                  Collector Information
+                </CardTitle>
+                <Button
+                  onClick={() => (isEditing ? handleSaveProfile() : setIsEditing(true))}
+                  disabled={loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg transition-all duration-200 transform hover:scale-105"
+                >
+                  {isEditing ? (
+                    <>
+                      <Save className="w-4 h-4 mr-2" /> Save Changes
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="w-4 h-4 mr-2" /> Edit Profile
+                    </>
+                  )}
                 </Button>
-              </DialogTrigger>
-            </Dialog>
-          </CardContent>
-        </Card>
-      </div>
+              </CardHeader>
+              <CardContent className="space-y-8">
+                {/* Personal Details */}
+                <div className="space-y-4">
+                  <h3 className="font-bold text-lg text-gray-800 border-b border-gray-200 pb-3 flex items-center gap-2">
+                    <User className="w-5 h-5 text-blue-600" /> Personal Details
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="name" className="text-gray-700 font-medium">Full Name</Label>
+                      {isEditing ? (
+                        <Input
+                          id="name"
+                          value={profileData.name}
+                          onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          placeholder="Enter your full name"
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.name || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-gray-700 font-medium">Email</Label>
+                      <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">{profileData.email}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone" className="text-gray-700 font-medium">Phone</Label>
+                      {isEditing ? (
+                        <Input
+                          id="phone"
+                          value={profileData.phone}
+                          onChange={(e) => setProfileData({ ...profileData, phone: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          placeholder="Enter phone number"
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.phone || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="emergency_contact" className="text-gray-700 font-medium">Emergency Contact</Label>
+                      {isEditing ? (
+                        <Input
+                          id="emergency_contact"
+                          value={profileData.emergency_contact}
+                          onChange={(e) => setProfileData({ ...profileData, emergency_contact: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          placeholder="Contact number in case of emergency"
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.emergency_contact || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="md:col-span-2 space-y-2">
+                      <Label htmlFor="address" className="text-gray-700 font-medium">Address</Label>
+                      {isEditing ? (
+                        <Textarea
+                          id="address"
+                          value={profileData.address}
+                          onChange={(e) => setProfileData({ ...profileData, address: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          rows={3}
+                          placeholder="Enter your full address"
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-3 px-3 bg-gray-50 rounded-lg whitespace-pre-line">
+                          {profileData.address || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-      {/* QR Code Dialog */}
-      <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <QrCode className="w-5 h-5" />
-              My Collector QR Code
-            </DialogTitle>
-            <DialogDescription>
-              Your unique collector identification QR code
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="text-center space-y-4">
-            <div className="w-48 h-48 bg-gray-100 rounded-lg mx-auto flex items-center justify-center">
-              <div className="text-center">
-                <QrCode className="w-24 h-24 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-500">Collector QR Code</p>
-                <p className="text-xs text-gray-400">{getUserQRCode()}</p>
-              </div>
-            </div>
-            
-            <div className="bg-blue-50 p-3 rounded-lg">
-              <p className="text-sm">
-                <strong>License:</strong> {profileData.licenseNumber}<br />
-                <strong>Zone:</strong> {profileData.zone}<br />
-                <strong>Vehicle:</strong> {profileData.vehicleNumber}
-              </p>
-            </div>
-          </div>
-          
-          <DialogFooter className="justify-center">
-            <Button onClick={() => setShowQRDialog(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                {/* Professional Details */}
+                <div className="space-y-4">
+                  <h3 className="font-bold text-lg text-gray-800 border-b border-gray-200 pb-3 flex items-center gap-2">
+                    <Briefcase className="w-5 h-5 text-blue-600" /> Professional Details
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="licenseNumber" className="text-gray-700 font-medium">License Number</Label>
+                      {isEditing ? (
+                        <Input
+                          id="licenseNumber"
+                          value={profileData.licenseNumber}
+                          onChange={(e) => setProfileData({ ...profileData, licenseNumber: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          placeholder="Enter license number"
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.licenseNumber || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="vehicle" className="text-gray-700 font-medium">Vehicle Number</Label>
+                      {isEditing ? (
+                        <Input
+                          id="vehicle"
+                          value={profileData.vehicleNumber}
+                          onChange={(e) => setProfileData({ ...profileData, vehicleNumber: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          placeholder="Enter vehicle registration"
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.vehicleNumber || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="md:col-span-2 space-y-2">
+                      <Label htmlFor="experience" className="text-gray-700 font-medium">Experience</Label>
+                      {isEditing ? (
+                        <Textarea
+                          id="experience"
+                          value={profileData.experience}
+                          onChange={(e) => setProfileData({ ...profileData, experience: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          rows={4}
+                          placeholder="Years of experience, certifications, training, etc."
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-3 px-3 bg-gray-50 rounded-lg whitespace-pre-line">
+                          {profileData.experience || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="md:col-span-2 space-y-2">
+                      <Label htmlFor="specialization" className="text-gray-700 font-medium">Specialization</Label>
+                      {isEditing ? (
+                        <Textarea
+                          id="specialization"
+                          value={profileData.specialization}
+                          onChange={(e) => setProfileData({ ...profileData, specialization: e.target.value })}
+                          className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                          rows={4}
+                          placeholder="Hazardous waste, recyclables, organic, etc."
+                        />
+                      ) : (
+                        <p className="font-medium text-gray-800 py-3 px-3 bg-gray-50 rounded-lg whitespace-pre-line">
+                          {profileData.specialization || 'Not set'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Operational Details */}
+                <div className="space-y-4">
+                  <h3 className="font-bold text-lg text-gray-800 border-b border-gray-200 pb-3 flex items-center gap-2">
+                    <MapPin className="w-5 h-5 text-blue-600" /> Operational Details
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="zone" className="text-gray-700 font-medium">Collection Zone</Label>
+                      {isEditing ? (
+                        <Select value={profileData.zone} onValueChange={(value) => setProfileData({ ...profileData, zone: value })}>
+                          <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all">
+                            <SelectValue placeholder="Select zone" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Ahmedabad Central">Ahmedabad Central</SelectItem>
+                            <SelectItem value="Ahmedabad East">Ahmedabad East</SelectItem>
+                            <SelectItem value="Ahmedabad West">Ahmedabad West</SelectItem>
+                            <SelectItem value="Ahmedabad North">Ahmedabad North</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.zone}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="shift" className="text-gray-700 font-medium">Shift</Label>
+                      {isEditing ? (
+                        <Select value={profileData.shift} onValueChange={(value) => setProfileData({ ...profileData, shift: value })}>
+                          <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all">
+                            <SelectValue placeholder="Select shift" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Morning (6 AM - 2 PM)">Morning (6 AM - 2 PM)</SelectItem>
+                            <SelectItem value="Afternoon (2 PM - 10 PM)">Afternoon (2 PM - 10 PM)</SelectItem>
+                            <SelectItem value="Night (10 PM - 6 AM)">Night (10 PM - 6 AM)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="font-medium text-gray-800 py-2 px-3 bg-gray-50 rounded-lg">
+                          {profileData.shift}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bio */}
+                <div className="space-y-2">
+                  <Label htmlFor="bio" className="text-gray-700 font-medium">Bio / Notes</Label>
+                  {isEditing ? (
+                    <Textarea
+                      id="bio"
+                      value={profileData.bio}
+                      onChange={(e) => setProfileData({ ...profileData, bio: e.target.value })}
+                      className="border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                      rows={5}
+                      placeholder="Tell us about yourself — your passion for waste management, goals, etc."
+                    />
+                  ) : (
+                    <p className="font-medium text-gray-800 py-4 px-3 bg-gray-50 rounded-lg whitespace-pre-line">
+                      {profileData.bio || 'Not set'}
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Security Tab */}
+          <TabsContent value="security" className="space-y-8">
+            <Card className="rounded-3xl shadow-xl border border-gray-100 bg-white">
+              <CardHeader>
+                <CardTitle className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                  <Lock className="w-6 h-6 text-blue-600" /> Password
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between p-6 border border-gray-200 rounded-2xl bg-gray-50">
+                  <div>
+                    <h3 className="font-semibold text-gray-800">Reset Password</h3>
+                    <p className="text-gray-600 mt-1">We’ll send a secure reset link to your registered email.</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={handlePasswordReset}
+                    className="border-blue-600 text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition-all"
+                  >
+                    Send Reset Link
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Support Tab */}
+          <TabsContent value="support" className="space-y-8">
+            {/* Support Info */}
+            <Card className="rounded-3xl shadow-xl border border-gray-100 bg-white">
+              <CardHeader>
+                <CardTitle className="text-2xl font-bold text-gray-800">Support</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-gray-600 text-lg leading-relaxed">
+                  For urgent assistance or technical issues, please contact your assigned route manager. 
+                  Our team is here to ensure your daily operations run smoothly.
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Legal & Policies */}
+            <Card className="rounded-3xl shadow-xl border border-gray-100 bg-white">
+              <CardHeader>
+                <CardTitle className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                  <Shield className="w-6 h-6 text-blue-600" /> Legal & Policies
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Button
+                  variant="outline"
+                  className="w-full justify-between border-gray-300 hover:bg-gray-50 transition-all"
+                  asChild
+                >
+                  <a href="https://dprofiz.com/privacy-policy.html" target="_blank" rel="noopener noreferrer">
+                    Privacy Policy
+                    <ExternalLink className="w-5 h-5 text-gray-500" />
+                  </a>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-between border-gray-300 hover:bg-gray-50 transition-all"
+                  asChild
+                >
+                  <a href="https://dprofiz.com/terms-and-conditions.html" target="_blank" rel="noopener noreferrer">
+                    Terms & Conditions
+                    <ExternalLink className="w-5 h-5 text-gray-500" />
+                  </a>
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Logout Card */}
+            <Card className="rounded-3xl shadow-xl border border-red-200 bg-white hover:shadow-red-100/50 transition-shadow">
+              <CardContent className="p-6">
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowLogoutDialog(true)}
+                  className="w-full flex items-center justify-center gap-2 text-white font-medium shadow-lg hover:shadow-red-500/30 transition-all transform hover:scale-105"
+                >
+                  <LogOut className="w-5 h-5" /> Logout
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
 
       {/* Logout Confirmation Dialog */}
       <Dialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirm Logout</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to logout? You'll need to sign in again to access your account.
+        <DialogContent className="max-w-md rounded-3xl shadow-2xl border-0">
+          <DialogHeader className="text-center">
+            <DialogTitle className="text-2xl font-bold text-gray-800">Confirm Logout</DialogTitle>
+            <DialogDescription className="text-gray-600 mt-2">
+              Are you sure you want to logout? You’ll need to sign in again to access your profile.
             </DialogDescription>
           </DialogHeader>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowLogoutDialog(false)}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleLogout}
-              className="bg-red-600 hover:bg-red-700"
+          <DialogFooter className="flex gap-3 pt-6">
+            <Button
+              variant="outline"
+              onClick={() => setShowLogoutDialog(false)}
+              className="border-gray-300 text-gray-700 hover:bg-gray-50 transition-all"
             >
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Change Password Dialog */}
-      <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Change Password</DialogTitle>
-            <DialogDescription>
-              Update your collector account password
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="current-password">Current Password</Label>
-              <Input id="current-password" type="password" />
-            </div>
-            <div>
-              <Label htmlFor="new-password">New Password</Label>
-              <Input id="new-password" type="password" />
-            </div>
-            <div>
-              <Label htmlFor="confirm-password">Confirm New Password</Label>
-              <Input id="confirm-password" type="password" />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPasswordDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handlePasswordSubmit}>
-              Change Password
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Privacy Settings Dialog */}
-      <Dialog open={showPrivacyDialog} onOpenChange={setShowPrivacyDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Privacy Settings</DialogTitle>
-            <DialogDescription>
-              Manage your privacy and data sharing preferences
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Location Tracking</p>
-                <p className="text-sm text-gray-500">Allow location tracking during work hours</p>
-              </div>
-              <input type="checkbox" defaultChecked className="rounded" />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Performance Analytics</p>
-                <p className="text-sm text-gray-500">Share performance data for improvement</p>
-              </div>
-              <input type="checkbox" defaultChecked className="rounded" />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Contact Visibility</p>
-                <p className="text-sm text-gray-500">Show contact info to admin</p>
-              </div>
-              <input type="checkbox" defaultChecked className="rounded" />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPrivacyDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handlePrivacySubmit}>
-              Save Settings
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Shift Preferences Dialog */}
-      <Dialog open={showShiftDialog} onOpenChange={setShowShiftDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Shift Preferences</DialogTitle>
-            <DialogDescription>
-              Update your preferred working hours and schedule
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="preferred-shift">Preferred Shift</Label>
-              <Select defaultValue={profileData.shift}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Morning (6 AM - 2 PM)">Morning (6 AM - 2 PM)</SelectItem>
-                  <SelectItem value="Afternoon (2 PM - 10 PM)">Afternoon (2 PM - 10 PM)</SelectItem>
-                  <SelectItem value="Night (10 PM - 6 AM)">Night (10 PM - 6 AM)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="preferred-zone">Preferred Zone</Label>
-              <Select defaultValue={profileData.zone}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Mumbai Central">Mumbai Central</SelectItem>
-                  <SelectItem value="Mumbai East">Mumbai East</SelectItem>
-                  <SelectItem value="Mumbai West">Mumbai West</SelectItem>
-                  <SelectItem value="Mumbai North">Mumbai North</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Weekend Availability</p>
-                <p className="text-sm text-gray-500">Available for weekend shifts</p>
-              </div>
-              <input type="checkbox" className="rounded" />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowShiftDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleShiftSubmit}>
-              Update Preferences
+            <Button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 text-white shadow-lg transition-all transform hover:scale-105"
+            >
+              <LogOut className="w-5 h-5 mr-2" /> Logout
             </Button>
           </DialogFooter>
         </DialogContent>

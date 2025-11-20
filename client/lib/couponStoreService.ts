@@ -1,223 +1,148 @@
-import { supabase } from './supabase';
+import { supabase } from "./supabase";
 
+// TypeScript interface for a coupon available in the store
 export interface Coupon {
   id: string;
   product_name: string;
-  product_image: string;
-  shop_logo: string;
+  product_image: string | null;
+  shop_logo: string | null;
   shop_name: string;
   points_cost: number;
   original_price: number;
   discounted_price: number;
   expiry_date: string;
-  category: string;
-  distance: string;
-  rating: number;
-  description: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  category: string | null;
+  distance: string | null;
+  rating: number | null;
+  quantity: number;
 }
 
+// TypeScript interface for a coupon that a user has redeemed and now owns
+// REVERTED: This interface now reflects the 'owned_coupons' table schema which is where coupons are stored.
 export interface OwnedCoupon {
-  id: string;
-  user_id: string;
-  coupon_id: string;
-  product_name: string;
-  shop_name: string;
-  shop_logo: string;
-  product_image: string;
-  value: number;
-  discounted_price: number;
-  redeemed_date: string;
-  expiry_date: string;
+  id: string; // The ID of the entry in the owned_coupons table
   status: 'active' | 'expired' | 'used';
-  qr_code: string;
-  shop_address: string;
-  shop_phone: string;
-  created_at: string;
-  updated_at: string;
+  redeemed_date: string; // The timestamp when the user spent points to get the coupon
+  claimed_at: string | null; // The timestamp when the coupon was marked as 'used' in-store
+  coupons_store: Coupon; // Contains all the original details of the coupon
 }
 
 /**
- * Fetches all active coupons from the store
- * @returns Promise with the coupons data
+ * Fetches all active and in-stock coupons from the store.
+ * @returns {Promise<{success: boolean, data: Coupon[] | null, error: string | null}>}
  */
 export async function getCoupons() {
   try {
     const { data, error } = await supabase
-      .from('coupons_store')
-      .select('*')
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
-    
+      .from("coupons_store")
+      .select("*")
+      .eq("is_active", true)
+      .gt("quantity", 0) // Only fetch coupons that are in stock
+      .order("created_at", { ascending: false });
+
     if (error) {
-      console.error('Error fetching coupons:', error.message);
-      return { success: false, error: error.message };
+      console.error("Error fetching coupons:", error);
+      return { success: false, data: null, error: "Failed to load coupons." };
     }
-    
-    return { success: true, data };
+    return { success: true, data: data as Coupon[], error: null };
   } catch (err) {
-    console.error('Unexpected error fetching coupons:', err);
-    return { success: false, error: 'An unexpected error occurred' };
+    console.error("Unexpected error in getCoupons:", err);
+    return { success: false, data: null, error: "An unexpected error occurred." };
   }
 }
 
 /**
- * Fetches coupons by category
- * @param category The category to filter by
- * @returns Promise with the filtered coupons data
- */
-export async function getCouponsByCategory(category: string) {
-  try {
-    const { data, error } = await supabase
-      .from('coupons_store')
-      .select('*')
-      .eq('is_active', true)
-      .eq('category', category)
-      .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error fetching coupons by category:', error.message);
-      return { success: false, error: error.message };
-    }
-    
-    return { success: true, data };
-  } catch (err) {
-    console.error('Unexpected error fetching coupons by category:', err);
-    return { success: false, error: 'An unexpected error occurred' };
-  }
-}
-
-/**
- * Redeems a coupon for a user
- * @param couponId The ID of the coupon to redeem
- * @returns Promise with the result of the redemption
+ * Redeems a coupon by calling a secure database function.
+ * This handles deducting points, creating the owned coupon, and decrementing stock in one transaction.
+ * @param {string} couponId - The UUID of the coupon from the coupons_store table.
+ * @returns {Promise<{success: boolean, error: string | null, newBalance?: number}>}
  */
 export async function redeemCoupon(couponId: string) {
   try {
-    // Get current user
+    // Calls the secure 'redeem_coupon_with_points' function you created in the Supabase SQL Editor.
+    const { data, error } = await supabase.rpc('redeem_coupon_with_points', {
+      coupon_id_input: couponId
+    });
+
+    if (error) {
+      console.error("Error calling redeem RPC:", error);
+      return { success: false, error: error.message };
+    }
+
+    // The RPC function returns a JSON object. We check the 'success' field inside it.
+    if (data && data.success) {
+      return { success: true, error: null, newBalance: data.newBalance };
+    } else {
+      // Handle cases where the RPC ran but returned a logical error (e.g., "Insufficient points")
+      return { success: false, error: data.error || "Redemption failed in database." };
+    }
+  } catch (err: any) {
+    console.error("Unexpected error in redeemCoupon:", err);
+    return { success: false, error: "An unexpected client-side error occurred." };
+  }
+}
+
+/**
+ * Fetches all coupons owned by the currently authenticated user.
+ * @returns {Promise<{success: boolean, data: OwnedCoupon[] | null, error: string | null}>}
+ */
+export async function getOwnedCoupons() {
+  try {
     const { data: { user } } = await supabase.auth.getUser();
-    
     if (!user) {
-      return { success: false, error: 'User not authenticated' };
+      throw new Error("User not authenticated.");
     }
 
-    // First, get the coupon details
-    const { data: couponData, error: couponError } = await supabase
-      .from('coupons_store')
-      .select('*')
-      .eq('id', couponId)
-      .eq('is_active', true)
-      .single();
-    
-    if (couponError || !couponData) {
-      return { success: false, error: 'Coupon not found or inactive' };
-    }
-
-    // Generate QR code
-    const qrCode = `COUPON-${couponId}-${user.id}-${Date.now()}`;
-
-    // Create owned coupon record
-    const { data: ownedCoupon, error: ownedError } = await supabase
-      .from('owned_coupons')
-      .insert([{
-        user_id: user.id,
-        coupon_id: couponId,
-        product_name: couponData.product_name,
-        shop_name: couponData.shop_name,
-        shop_logo: couponData.shop_logo,
-        product_image: couponData.product_image,
-        value: couponData.original_price,
-        discounted_price: couponData.discounted_price,
-        expiry_date: couponData.expiry_date,
-        qr_code: qrCode,
-        shop_address: '123 Main Street, City', // Default address
-        shop_phone: '+91 98765 43210' // Default phone
-      }])
-      .select()
-      .single();
-    
-    if (ownedError) {
-      console.error('Error creating owned coupon:', ownedError.message);
-      return { success: false, error: ownedError.message };
-    }
-
-    // Add transaction record for points spent
-    const { error: transactionError } = await supabase
-      .from('transaction_history')
-      .insert([{
-        user_id: user.id,
-        type: 'coupon_redemption',
-        description: `Redeemed ${couponData.product_name} from ${couponData.shop_name}`,
-        amount: -couponData.points_cost,
-        status: 'completed',
-        reference_id: ownedCoupon.id
-      }]);
-    
-    if (transactionError) {
-      console.error('Error creating transaction record:', transactionError.message);
-      // Don't fail the redemption if transaction record fails
-    }
-
-    return { success: true, data: ownedCoupon };
-  } catch (err) {
-    console.error('Unexpected error redeeming coupon:', err);
-    return { success: false, error: 'An unexpected error occurred' };
-  }
-}
-
-/**
- * Fetches owned coupons for a user
- * @param userId The user's ID
- * @returns Promise with the owned coupons data
- */
-export async function getOwnedCoupons(userId: string) {
-  try {
+    // REVERTED: Fetches from the 'owned_coupons' table, which is where the redeem RPC saves data.
     const { data, error } = await supabase
       .from('owned_coupons')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error fetching owned coupons:', error.message);
-      return { success: false, error: error.message };
-    }
-    
-    return { success: true, data };
-  } catch (err) {
-    console.error('Unexpected error fetching owned coupons:', err);
-    return { success: false, error: 'An unexpected error occurred' };
-  }
-}
-
-/**
- * Updates the status of an owned coupon
- * @param ownedCouponId The ID of the owned coupon
- * @param status The new status
- * @returns Promise with the result of the update
- */
-export async function updateOwnedCouponStatus(ownedCouponId: string, status: 'active' | 'expired' | 'used') {
-  try {
-    const { data, error } = await supabase
-      .from('owned_coupons')
-      .update({ 
+      .select(`
+        id,
         status,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', ownedCouponId)
-      .select()
-      .single();
-    
+        redeemed_date,
+        claimed_at, 
+        coupons_store ( * )
+      `)
+      .eq('user_id', user.id)
+      .order('redeemed_date', { ascending: false });
+
     if (error) {
-      console.error('Error updating owned coupon status:', error.message);
-      return { success: false, error: error.message };
+      console.error("Error fetching owned coupons:", error);
+      return { success: false, data: null, error: "Failed to get your coupons." };
     }
-    
-    return { success: true, data };
+
+    // Filter out any results where the nested coupon data might be missing
+    const validData = data?.filter(c => c.coupons_store) || [];
+
+    return { success: true, data: validData as OwnedCoupon[], error: null };
   } catch (err) {
-    console.error('Unexpected error updating owned coupon status:', err);
-    return { success: false, error: 'An unexpected error occurred' };
+    const error = err as Error;
+    console.error("Unexpected error in getOwnedCoupons:", error);
+    return { success: false, data: null, error: error.message };
   }
 }
+
+/**
+ * Generates a short-lived, secure JWT for a specific owned coupon.
+ * This token can be converted to a QR code for in-store redemption.
+ * @param {string} ownedCouponId - The UUID of the coupon from the owned_coupons table.
+ * @returns {Promise<{success: boolean, token: string | null, error: string | null}>}
+ */
+export async function generateCouponToken(ownedCouponId: string) {
+  try {
+    const { data, error } = await supabase.rpc('generate_coupon_jwt', {
+      owned_coupon_id: ownedCouponId
+    });
+
+    if (error) {
+      console.error("Error generating coupon token:", error);
+      return { success: false, token: null, error: error.message };
+    }
+
+    return { success: true, token: data, error: null };
+  } catch (err: any) {
+    console.error("Unexpected error in generateCouponToken:", err);
+    return { success: false, token: null, error: "An unexpected error occurred." };
+  }
+}
+

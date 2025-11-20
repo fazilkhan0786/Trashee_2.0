@@ -1,0 +1,10 @@
+> vite
+
+
+  VITE v6.3.6  ready in 223 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.0.0.2:8080/
+  ➜  press h + enter to show help
+11:43:22 AM [vite] (client) hmr update /client/components/UserTypeSelection.tsx, /client/global.css
+12:48:41 PM [vite] (client) hmr update /client/components/UserTypeSelection.tsx, /client/global.css (x2)

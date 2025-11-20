@@ -1,27 +1,61 @@
-import React, { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Camera, QrCode, MapPin, Clock, Coins, CheckCircle, X, Truck } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  ArrowLeft,
+  Camera,
+  Clock,
+  CheckCircle,
+  X,
+  QrCode,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/lib/supabase";
+import { QrReader } from "react-qr-reader";
 
 export default function CollectorScanner() {
   const navigate = useNavigate();
   const [isScanning, setIsScanning] = useState(false);
   const [lastScan, setLastScan] = useState<any>(null);
   const [cooldownTime, setCooldownTime] = useState(0);
-  const [scanHistory, setScanHistory] = useState([
-    { id: 'BIN-012', type: 'bin', location: 'Industrial Area, Block C', timestamp: '2024-01-15 11:20', points: 15 },
-    { id: 'BIN-008', type: 'bin', location: 'Commercial District, Plaza 2', timestamp: '2024-01-14 14:45', points: 15 },
-    { id: 'BIN-015', type: 'bin', location: 'Residential Zone, Street 5', timestamp: '2024-01-13 09:30', points: 15 },
-    { id: 'BIN-003', type: 'bin', location: 'Market Area, Section A', timestamp: '2024-01-12 16:15', points: 15 }
-  ]);
+  const [scanHistory, setScanHistory] = useState<any[]>([]);
+  const [noQrMessage, setNoQrMessage] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    fetchScanHistory();
+  }, []);
+
+  const fetchScanHistory = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("scan_history")
+      .select("*")
+      .eq("profiles_id", user.id)
+      .order("scanned_at", { ascending: false })
+      .limit(5);
+
+    if (error) {
+      console.error("Error fetching scan history:", error);
+    } else {
+      setScanHistory(data || []);
+    }
+  };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | undefined;
     if (cooldownTime > 0) {
       interval = setInterval(() => {
-        setCooldownTime(prev => prev - 1);
+        setCooldownTime((prev) => (prev > 0 ? prev - 1 : 0));
       }, 1000);
     }
     return () => clearInterval(interval);
@@ -30,241 +64,215 @@ export default function CollectorScanner() {
   const formatCooldownTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
   };
 
-  const simulateQRScan = () => {
-    setIsScanning(true);
-    
-    setTimeout(() => {
-      const success = Math.random() > 0.2; // 80% success rate
+  const handleScan = async (qrData: string | null) => {
+    if (!qrData || !isScanning || cooldownTime > 0) return;
+
+    setIsScanning(false);
+    setNoQrMessage(false);
+    setError(null);
+    console.log("QR Code Detected:", qrData);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setError("You must be logged in to scan.");
+      return;
+    }
+
+    // --- Core Logic ---
+    try {
+      const pointsToAdd = Math.floor(Math.random() * 20) + 10; // 10–30 points
+      const location = ["Green Park", "Metro Station", "Shopping Mall", "City Center"][Math.floor(Math.random() * 4)];
+
+      // ✅ FIX: Use the correct column names from your SQL schema.
+      // Removed 'scan_type' and 'status' as they are not in the table.
+      const { data: newScanRecord, error: insertError } = await supabase
+        .from("scan_history")
+        .insert({
+          profiles_id: user.id,
+          scan_data: qrData,       // Use the 'scan_data' column for the raw QR text
+          trashbin_id: qrData,     // Assuming the QR data is the UUID of the trash bin
+          location: location,
+          points_awarded: pointsToAdd, // Use the 'points_awarded' column
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      // 🔥 IMPROVEMENT: Use the atomic RPC function to update points.
+      // This is safer and more efficient than reading then writing.
+      const { error: pointsError } = await supabase.rpc('increment_user_points', {
+        user_id_input: user.id,
+        points_to_add: pointsToAdd,
+      });
+
+      if (pointsError) throw pointsError;
       
-      if (success) {
-        const newScan = {
-          id: `BIN-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`,
-          type: 'bin',
-          location: ['Industrial Area, Block C', 'Commercial District, Plaza 2', 'Residential Zone, Street 5', 'Market Area, Section A'][Math.floor(Math.random() * 4)],
-          timestamp: new Date().toLocaleString('en-IN', { 
-            year: 'numeric', 
-            month: '2-digit', 
-            day: '2-digit', 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          }),
-          points: 15
-        };
-        
-        setLastScan(newScan);
-        setScanHistory(prev => [newScan, ...prev.slice(0, 4)]);
-        setCooldownTime(300); // 5 minutes cooldown
-      } else {
-        setLastScan({ error: 'No QR code detected' });
-      }
-      
-      setIsScanning(false);
-    }, 2000);
+      // Update UI state with successful scan
+      setLastScan({
+        id: newScanRecord.id,
+        trashbin_id: newScanRecord.trashbin_id,
+        location: newScanRecord.location,
+        timestamp: new Date(newScanRecord.scanned_at).toLocaleString("en-IN"),
+        points: newScanRecord.points_awarded,
+      });
+
+      setCooldownTime(300); // 5 min cooldown
+      fetchScanHistory(); // Refresh the history list
+
+    } catch (err: any) {
+      console.error("Error processing scan:", err);
+      setError("Failed to process scan. The QR code might be invalid or there was a network issue.");
+      setLastScan({ error: true }); // Show an error state in the UI
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 pb-20">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4 animate-in slide-in-from-top duration-500">
-        <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => navigate(-1)}
-            className="p-2"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-xl font-bold">Collector Scanner</h1>
-            <p className="text-sm text-gray-500">Scan trash bins during collection routes</p>
+      <div className="bg-gradient-to-r from-blue-700 to-cyan-600 text-white">
+        <div className="max-w-5xl mx-auto p-6">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate(-1)}
+              className="p-2 text-white hover:bg-white/20 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">QR Scanner</h1>
+              <p className="text-blue-100 mt-1">Scan trash bins to earn points</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
+      <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
         {/* Scanner Interface */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Camera className="w-5 h-5 text-green-600" />
-              Collector Scanner
+        <Card className="border-0 shadow-xl rounded-3xl overflow-hidden bg-white">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-3 text-lg font-semibold text-gray-800">
+              <Camera className="w-5 h-5 text-blue-600" />
+              Camera Scanner
             </CardTitle>
-            <CardDescription>
-              Scan bins during your collection route to earn points
+            <CardDescription className="text-gray-600">
+              Point your camera at a trash bin QR code
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Collector Benefits Banner */}
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                  <Truck className="w-5 h-5 text-orange-600" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-orange-800">Collector Advantage</h3>
-                  <p className="text-sm text-orange-600">Earn points for every bin you scan during collection</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Camera Simulation */}
-            <div className="relative bg-gray-900 rounded-lg aspect-square overflow-hidden">
-              <div className="absolute inset-0 flex items-center justify-center">
-                {isScanning ? (
-                  <div className="text-center text-white">
-                    <div className="animate-pulse">
-                      <QrCode className="w-16 h-16 mx-auto mb-2" />
-                      <p>Scanning...</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-white">
-                    <Camera className="w-16 h-16 mx-auto mb-2 opacity-50" />
-                    <p className="opacity-75">Camera View</p>
-                    <p className="text-sm opacity-50 mt-1">Point at trash bin QR code</p>
-                  </div>
-                )}
-              </div>
-              
-              {/* Scanning overlay */}
-              <div className="absolute inset-0 border-2 border-white/30 rounded-lg">
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-green-400 rounded-lg"></div>
-              </div>
-            </div>
-
-            {/* Scan Button */}
-            <Button 
-              onClick={simulateQRScan}
-              disabled={isScanning || cooldownTime > 0}
-              className="w-full bg-primary hover:bg-primary/90"
-              size="lg"
+            <Button
+              onClick={() => {
+                setIsScanning(true);
+                setNoQrMessage(false);
+                setError(null);
+              }}
+              disabled={cooldownTime > 0 || isScanning}
+              className="w-full h-12 bg-gradient-to-r from-blue-600 to-cyan-600 hover:opacity-90 text-white shadow-md transition-all duration-200"
             >
-              {isScanning ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
-                  Scanning...
-                </>
-              ) : cooldownTime > 0 ? (
-                <>
-                  <Clock className="w-4 h-4 mr-2" />
-                  Cooldown: {formatCooldownTime(cooldownTime)}
-                </>
-              ) : (
-                <>
-                  <QrCode className="w-4 h-4 mr-2" />
-                  Scan Trash Bin
-                </>
-              )}
+              {isScanning ? "Scanning..." : (cooldownTime > 0 ? `Wait ${formatCooldownTime(cooldownTime)}` : "Scan QR Code")}
             </Button>
 
-            {/* Cooldown info */}
-            {cooldownTime > 0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-orange-800">
-                  <Clock className="w-4 h-4" />
-                  <span className="text-sm">
-                    Next scan available in {formatCooldownTime(cooldownTime)}
-                  </span>
+            {isScanning && (
+              <div className="relative aspect-video border-2 border-blue-100 rounded-xl overflow-hidden shadow-inner bg-gray-900">
+                <QrReader
+                  constraints={{ facingMode: "environment" }}
+                  onResult={(result, error) => {
+                    if (result) {
+                      handleScan(result.getText());
+                    }
+                    if (error && !result) {
+                      setNoQrMessage(true);
+                    }
+                  }}
+                  videoStyle={{ objectFit: 'cover' }}
+                  className="w-full h-full"
+                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-2/3 max-w-[250px] aspect-square border-4 border-white/50 rounded-lg shadow-[0_0_0_4000px_rgba(0,0,0,0.3)]" />
                 </div>
               </div>
             )}
+            
+            {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
+
           </CardContent>
         </Card>
 
         {/* Last Scan Result */}
         {lastScan && (
-          <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
+          <Card className="border-0 shadow-xl rounded-3xl overflow-hidden bg-white">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+              <CardTitle className="flex items-center gap-3 text-lg font-semibold text-gray-800">
                 {lastScan.error ? (
                   <X className="w-5 h-5 text-red-600" />
                 ) : (
                   <CheckCircle className="w-5 h-5 text-green-600" />
                 )}
-                Scan Result
+                <span className="text-gray-800">
+                  {lastScan.error ? "Scan Failed" : "Scan Successful!"}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              {lastScan.error ? (
-                <div className="text-center py-4">
-                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <X className="w-8 h-8 text-red-600" />
+            {!lastScan.error && (
+              <CardContent className="space-y-3">
+                <p className="font-bold text-2xl text-green-700">
+                  You earned {lastScan.points} points!
+                </p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Bin ID</p>
+                    <p className="font-medium text-gray-800">{lastScan.trashbin_id}</p>
                   </div>
-                  <p className="text-red-600 font-medium">{lastScan.error}</p>
-                  <p className="text-sm text-gray-500 mt-1">Please try again with a valid QR code</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <CheckCircle className="w-8 h-8 text-green-600" />
-                    </div>
-                    <h3 className="text-lg font-bold text-green-800">Scan Successful!</h3>
-                    <p className="text-green-600">You earned 15 points</p>
+                  <div>
+                    <p className="text-gray-500">Location</p>
+                    <p className="font-medium text-gray-800">{lastScan.location}</p>
                   </div>
-                  
-                  <div className="bg-green-50 rounded-lg p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Bin ID:</span>
-                      <Badge variant="outline">{lastScan.id}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Location:</span>
-                      <div className="flex items-center gap-1 text-sm">
-                        <MapPin className="w-4 h-4 text-gray-500" />
-                        <span>{lastScan.location}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Timestamp:</span>
-                      <span className="text-sm">{lastScan.timestamp}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Points Earned:</span>
-                      <div className="flex items-center gap-1">
-                        <Coins className="w-4 h-4 text-yellow-500" />
-                        <span className="font-bold text-green-600">+{lastScan.points}</span>
-                      </div>
-                    </div>
+                  <div className="col-span-2">
+                    <p className="text-gray-500">Timestamp</p>
+                    <p className="font-medium text-gray-800">{lastScan.timestamp}</p>
                   </div>
                 </div>
-              )}
-            </CardContent>
+              </CardContent>
+            )}
           </Card>
         )}
 
         {/* Scan History */}
-        <Card className="animate-in fade-in-50 slide-in-from-bottom-4 duration-700 delay-100">
+        <Card className="border-0 shadow-xl rounded-3xl overflow-hidden bg-white">
           <CardHeader>
-            <CardTitle>Collection Route Scans</CardTitle>
-            <CardDescription>Your recent bin scans during collection routes</CardDescription>
+            <CardTitle className="flex items-center gap-3 text-lg font-semibold text-gray-800">
+              <QrCode className="w-5 h-5 text-blue-600" />
+              <span className="text-gray-800">Recent Scans</span>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {scanHistory.map((scan, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <Truck className="w-5 h-5 text-green-600" />
-                    </div>
+              {scanHistory.length > 0 ? (
+                scanHistory.map((scan) => (
+                  <div key={scan.id} className="flex items-center justify-between p-4 border border-gray-100 rounded-xl bg-white hover:shadow-md transition-shadow">
                     <div>
-                      <p className="font-medium">{scan.id}</p>
-                      <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <MapPin className="w-3 h-3" />
-                        <span>{scan.location}</span>
-                      </div>
-                      <p className="text-xs text-gray-500">{scan.timestamp}</p>
+                      <p className="font-medium text-gray-800">
+                        Bin: {scan.trashbin_id}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {new Date(scan.scanned_at).toLocaleString("en-IN", { dateStyle: 'short', timeStyle: 'short'})}
+                      </p>
                     </div>
+                    <Badge className="bg-blue-100 text-blue-800 border-blue-200 font-semibold px-3 py-1">
+                      +{scan.points_awarded} Points
+                    </Badge>
                   </div>
-                  <Badge variant="outline" className="text-green-600 border-green-200">
-                    +{scan.points}
-                  </Badge>
+                ))
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">No recent scans</p>
                 </div>
-              ))}
+              )}
             </div>
           </CardContent>
         </Card>
